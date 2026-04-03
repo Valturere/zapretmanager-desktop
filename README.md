@@ -136,3 +136,144 @@ Windows-приложение для установки, обновления, з
 ## Дисклеймер
 
 > ⚠️ В случае введения юридических или технических ограничений со стороны провайдеров или государственных органов автор не несёт ответственности за последствия использования программы. Скачивая и используя приложение, вы соглашаетесь с этим.
+
+---
+
+# ZapretManager
+
+Windows application for installing, updating, launching, testing and rolling back zapret builds based on [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube).
+
+`ZapretManager` is designed to let you work with a zapret build from one window, without constantly switching between bat files, folders, domain lists and manual diagnostics.
+
+## What the program can do
+
+- find the zapret folder automatically or manually
+- download, update, remove and roll back the build
+- launch the selected config and stop `winws`
+- install and remove the Windows service
+- pick a config through automatic mode
+- test configs using HTTP, TLS 1.2, TLS 1.3 and ping
+- show detailed probe results for every target
+- hide broken configs and restore them from a separate window
+- edit `targets.txt`, `hosts`, included and excluded domains, and custom IPSet subnets
+- manage DNS profiles, custom DNS and DoH
+- clear Discord cache directly from the program
+- run in the tray, stay single-instance and switch between light and dark themes
+
+## Why this is convenient
+
+- no need to remember which bat file to launch manually
+- you can compare configs quickly and see what actually works better
+- service control, DNS, diagnostics and list editing are all available in one place
+- updating and rolling back builds does not require manual folder juggling
+
+## If you do not want to configure everything manually
+
+If you do not want to deal with configs, bat files and extra settings, the program has an `Automatic mode` button.
+
+In practice it works like this:
+
+- if zapret is not installed yet, the program asks where to place it and downloads the latest build there
+- if a build is already connected, this step is skipped
+- automatically prepares the environment by updating `IPSet` and `hosts`
+- runs a full check of available configs
+- compares HTTP, TLS 1.2, TLS 1.3 and ping results
+- selects the best fully suitable config
+- installs it as a Windows service and starts it immediately
+
+So in many cases the first start is as simple as launching the program and pressing `Automatic mode`.
+
+## Who this is for
+
+`ZapretManager` is useful for people who:
+
+- use zapret on Windows
+- want to launch and test different configs quickly
+- do not want to edit service files manually inside the build folder
+- want DNS, diagnostics and target lists close at hand
+
+## Quick start
+
+1. Download `ZapretManager.exe` from **Releases**.
+2. Launch the program.
+3. Select an existing zapret folder or download a fresh build from the interface.
+4. Pick a config and test it, or just use automatic mode.
+
+## Tray workflow
+
+The program is designed to work comfortably from the system tray:
+
+- it can minimize to tray instead of closing completely
+- it can be restored quickly from the tray icon
+- the tray menu provides quick access to common actions
+- it can stay in the background without getting in the way on the taskbar
+
+This is useful when zapret is already running and you just want to keep the manager nearby.
+
+## System requirements
+
+- Windows 10 / Windows 11
+- x64
+- administrator rights for some actions involving services, drivers and system files
+
+## Important note about Windows Defender
+
+`ZapretManager` itself usually does not trigger antivirus warnings, but Windows Defender may complain about files from the zapret build.
+
+If something gets blocked during installation, updating or launching the build, it is better to:
+
+- add the zapret build folder to Windows Defender exclusions
+- or temporarily disable protection while installing or updating the build from the program
+
+This applies to zapret files, not to the `ZapretManager` interface itself.
+
+## Project base
+
+- Flowseal build: [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube)
+- original zapret project: [bol-van/zapret](https://github.com/bol-van/zapret)
+
+## Screenshots
+
+### Main window
+
+![Main window](Assets/README/main-dark.png)
+
+Build discovery, config launching, automatic mode, service controls, updating and test results are all gathered in one place. This is the main working area of the program.
+
+### Light theme
+
+![Light theme](Assets/README/main-light.png)
+
+`ZapretManager` includes not only a dark theme but also a full light theme. Core scenarios, tables and windows support theme switching without a separate interface mode.
+
+### System diagnostics
+
+![System diagnostics](Assets/README/diagnostics.png)
+
+Shows what may interfere with the build: Windows services, DNS, WinDivert, `hosts` and other system conflicts. This is especially useful before the first start and after updating.
+
+### Detailed probe results
+
+![Detailed probe results](Assets/README/probe-details.png)
+
+For every config you can open a detailed view of targets, HTTP, TLS 1.2, TLS 1.3, ping and the final status. This helps you understand what works and what does not.
+
+### Target editor
+
+![targets.txt editor](Assets/README/targets-editor.png)
+
+Service lists can be edited directly from the program without manually opening files inside the build folder. The same applies to `hosts`, domain lists and custom IPSet subnets.
+
+## Useful tools
+
+Besides build management and config testing, the program also includes practical utility actions. For example, you can clear Discord cache directly from the interface without hunting for the correct folders manually.
+
+## Important
+
+`ZapretManager` does not replace the zapret project and is not an official part of it. It is a separate Windows manager created to make working with zapret builds more convenient.
+
+---
+
+## Disclaimer
+
+> ⚠️ If providers or government bodies introduce legal or technical restrictions, the author is not responsible for any consequences of using this software. By downloading and using the application, you agree to this.
