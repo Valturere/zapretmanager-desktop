@@ -1,0 +1,165 @@
+<Window x:Class="ZapretManager.DeleteZapretChoiceWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Удаление zapret"
+        Width="620"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
+    <Window.Resources>
+        <SolidColorBrush x:Key="WindowBgBrush" Color="#102235" />
+        <SolidColorBrush x:Key="WindowBorderBrush" Color="#295276" />
+        <SolidColorBrush x:Key="TitleBrush" Color="#FFFFFF" />
+        <SolidColorBrush x:Key="TextBrush" Color="#D5E4F5" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#89A6C2" />
+        <SolidColorBrush x:Key="PanelBrush" Color="#0C1A28" />
+        <SolidColorBrush x:Key="PanelBorderBrush" Color="#274A6B" />
+        <SolidColorBrush x:Key="PrimaryBrush" Color="#47C78B" />
+        <SolidColorBrush x:Key="PrimaryBorderBrush" Color="#7BE2B2" />
+        <SolidColorBrush x:Key="PrimaryTextBrush" Color="#0A2416" />
+        <SolidColorBrush x:Key="ActionBrush" Color="#173454" />
+        <SolidColorBrush x:Key="ActionBorderBrush" Color="#31597F" />
+        <SolidColorBrush x:Key="DangerBrush" Color="#C55B5B" />
+        <SolidColorBrush x:Key="DangerBorderBrush" Color="#E17C7C" />
+
+        <Style x:Key="ActionButtonStyle" TargetType="Button">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border Margin="11"
+            Padding="20"
+            Background="{DynamicResource WindowBgBrush}"
+            BorderBrush="{DynamicResource WindowBorderBrush}"
+            BorderThickness="1"
+            CornerRadius="16"
+            ClipToBounds="True">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24"
+                              ShadowDepth="0"
+                              Opacity="0.18"
+                              Color="#172838" />
+        </Border.Effect>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <Grid Grid.Row="0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel>
+                    <TextBlock Text="Как удалить сборку zapret?"
+                               Foreground="{DynamicResource TitleBrush}"
+                               FontSize="22"
+                               FontWeight="SemiBold" />
+                    <TextBlock x:Name="PathTextBlock"
+                               Margin="0,8,0,0"
+                               Foreground="{DynamicResource MutedBrush}"
+                               FontSize="14"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+
+                <Button Grid.Column="1"
+                        Width="30"
+                        Height="30"
+                        Click="CloseButton_Click"
+                        Content="×"
+                        FontSize="18"
+                        Foreground="{DynamicResource TitleBrush}"
+                        Background="Transparent"
+                        BorderBrush="Transparent"
+                        BorderThickness="0"
+                        Cursor="Hand" />
+            </Grid>
+
+            <Border Grid.Row="1"
+                    Margin="0,18,0,0"
+                    Padding="16"
+                    Background="{DynamicResource PanelBrush}"
+                    BorderBrush="{DynamicResource PanelBorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12">
+                <StackPanel>
+                    <TextBlock Foreground="{DynamicResource TextBrush}"
+                               FontSize="15"
+                               FontWeight="SemiBold"
+                               Text="Варианты удаления" />
+                    <TextBlock Margin="0,12,0,0"
+                               Foreground="{DynamicResource TextBrush}"
+                               TextWrapping="Wrap"
+                               LineHeight="22"
+                               Text="Удалить текущую и сохранённую предыдущую сборку, но оставить пользовательские списки для следующей установки. Менеджер автоматически вернёт их в новую сборку при следующем скачивании или выборе папки." />
+                    <TextBlock Margin="0,10,0,0"
+                               Foreground="{DynamicResource TextBrush}"
+                               TextWrapping="Wrap"
+                               LineHeight="22"
+                               Text="Или удалить всё подчистую: текущую и сохранённую предыдущую сборку, сохранённые списки менеджера и блок hosts, добавленный Zapret Manager." />
+                </StackPanel>
+            </Border>
+
+            <StackPanel Grid.Row="2"
+                        Margin="0,18,0,0"
+                        Orientation="Vertical">
+                <Button Height="40"
+                        Click="DeleteKeepListsButton_Click"
+                        Content="Удалить сборку, сохранить списки"
+                        Foreground="{DynamicResource PrimaryTextBrush}"
+                        Background="{DynamicResource PrimaryBrush}"
+                        BorderBrush="{DynamicResource PrimaryBorderBrush}"
+                        BorderThickness="1"
+                        Cursor="Hand"
+                        Style="{StaticResource ActionButtonStyle}" />
+                <Button Height="40"
+                        Margin="0,10,0,0"
+                        Click="DeleteEverythingButton_Click"
+                        Content="Удалить всё подчистую"
+                        Foreground="White"
+                        Background="{DynamicResource DangerBrush}"
+                        BorderBrush="{DynamicResource DangerBorderBrush}"
+                        BorderThickness="1"
+                        Cursor="Hand"
+                        Style="{StaticResource ActionButtonStyle}" />
+            </StackPanel>
+
+            <Button Grid.Row="3"
+                    Height="38"
+                    Margin="0,18,0,0"
+                    HorizontalAlignment="Right"
+                    Width="132"
+                    Click="CancelButton_Click"
+                    Content="Отмена"
+                    Foreground="{DynamicResource TitleBrush}"
+                    Background="{DynamicResource ActionBrush}"
+                    BorderBrush="{DynamicResource ActionBorderBrush}"
+                    BorderThickness="1"
+                    Cursor="Hand"
+                    Style="{StaticResource ActionButtonStyle}" />
+        </Grid>
+    </Border>
+</Window>

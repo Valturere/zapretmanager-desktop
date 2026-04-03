@@ -1,0 +1,25 @@
+# Build output
+bin/
+obj/
+Release/
+IntermediateBuilds/
+
+# User / IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+# Logs / temp
+*.log
+*.tmp
+*.temp
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Local service storage
+.zapret-manager/
+
