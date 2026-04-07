@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using ZapretManager.Models;
 
@@ -18,18 +19,27 @@ public sealed class WindowsServiceManager
         using var serviceKey = Registry.LocalMachine.OpenSubKey($@"SYSTEM\CurrentControlSet\Services\{ServiceName}");
         var isInstalled = serviceKey is not null;
         var isRunning = false;
+        string? executablePath = null;
+        string? installationRootPath = null;
+        string? profileToken = null;
 
         if (isInstalled)
         {
             var output = RunHidden("sc.exe", $"query {ServiceName}");
             isRunning = output.Contains("RUNNING", StringComparison.OrdinalIgnoreCase);
+            var imagePath = serviceKey?.GetValue("ImagePath") as string;
+            executablePath = TryExtractExecutablePath(imagePath);
+            _ = TryParseServiceHostArguments(imagePath, out installationRootPath, out profileToken);
         }
 
         return new ServiceStatusInfo
         {
             IsInstalled = isInstalled,
             IsRunning = isRunning,
-            ProfileName = serviceKey?.GetValue("zapret-discord-youtube") as string
+            ProfileName = serviceKey?.GetValue("zapret-discord-youtube") as string,
+            ExecutablePath = executablePath,
+            InstallationRootPath = installationRootPath,
+            ProfileToken = profileToken
         };
     }
 
@@ -255,6 +265,30 @@ public sealed class WindowsServiceManager
 
         var firstSpace = trimmed.IndexOf(' ');
         return firstSpace > 0 ? trimmed[..firstSpace] : trimmed;
+    }
+
+    private static bool TryParseServiceHostArguments(string? imagePath, out string? installationRootPath, out string? profileToken)
+    {
+        installationRootPath = null;
+        profileToken = null;
+        if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            return false;
+        }
+
+        var match = Regex.Match(
+            imagePath,
+            "\"[^\"]+\"\\s+--service-host\\s+\"(?<root>[^\"]+)\"\\s+\"(?<profile>[^\"]+)\"",
+            RegexOptions.IgnoreCase);
+
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        installationRootPath = match.Groups["root"].Value;
+        profileToken = match.Groups["profile"].Value;
+        return !string.IsNullOrWhiteSpace(installationRootPath) && !string.IsNullOrWhiteSpace(profileToken);
     }
 
     private static async Task<string> RunHiddenAsync(string fileName, IEnumerable<string> arguments)

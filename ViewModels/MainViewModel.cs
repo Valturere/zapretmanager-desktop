@@ -1223,7 +1223,11 @@ public sealed class MainViewModel : ObservableObject
 
         currentProcessPath = Path.GetFullPath(currentProcessPath);
         var serviceStatus = _serviceManager.GetStatus();
-        var restartHostedServiceAfterUpdate = serviceStatus.IsRunning && _serviceManager.UsesExecutable(currentProcessPath);
+        var reinstallHostedServiceAfterUpdate =
+            serviceStatus.IsInstalled &&
+            _serviceManager.UsesExecutable(currentProcessPath) &&
+            !string.IsNullOrWhiteSpace(serviceStatus.InstallationRootPath) &&
+            !string.IsNullOrWhiteSpace(serviceStatus.ProfileToken);
         string? downloadedPath = null;
         await RunBusyAsync(async () =>
         {
@@ -1247,7 +1251,9 @@ public sealed class MainViewModel : ObservableObject
                 currentProcessPath,
                 Process.GetCurrentProcess().Id,
                 WindowsServiceManager.ServiceName,
-                restartHostedServiceAfterUpdate);
+                reinstallHostedServiceAfterUpdate,
+                serviceStatus.InstallationRootPath,
+                serviceStatus.ProfileToken);
         }
         catch (OperationCanceledException)
         {

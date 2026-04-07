@@ -119,7 +119,9 @@ public sealed class ManagerUpdateService
         string currentExecutablePath,
         int currentProcessId,
         string? hostedServiceName = null,
-        bool restartHostedServiceAfterUpdate = false,
+        bool reinstallHostedServiceAfterUpdate = false,
+        string? hostedServiceInstallationRootPath = null,
+        string? hostedServiceProfileToken = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(downloadedExecutablePath) || !File.Exists(downloadedExecutablePath))
@@ -148,7 +150,7 @@ public sealed class ManagerUpdateService
         {
             FileName = "powershell.exe",
             Arguments =
-                $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {QuoteArgument(scriptPath)} -CurrentProcessId {currentProcessId} -SourcePath {QuoteArgument(downloadedExecutablePath)} -TargetPath {QuoteArgument(currentExecutablePath)} -BackupPath {QuoteArgument(backupPath)} -HostedServiceName {QuoteArgument(hostedServiceName ?? string.Empty)} -RestartHostedService:{(restartHostedServiceAfterUpdate ? "$true" : "$false")}",
+                $"-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {QuoteArgument(scriptPath)} -CurrentProcessId {currentProcessId} -SourcePath {QuoteArgument(downloadedExecutablePath)} -TargetPath {QuoteArgument(currentExecutablePath)} -BackupPath {QuoteArgument(backupPath)} -HostedServiceName {QuoteArgument(hostedServiceName ?? string.Empty)} -ReinstallHostedService:{(reinstallHostedServiceAfterUpdate ? "$true" : "$false")} -HostedServiceInstallationRootPath {QuoteArgument(hostedServiceInstallationRootPath ?? string.Empty)} -HostedServiceProfileToken {QuoteArgument(hostedServiceProfileToken ?? string.Empty)}",
             WorkingDirectory = updateDirectory,
             UseShellExecute = true
         };
@@ -306,7 +308,9 @@ param(
     [string]$TargetPath,
     [string]$BackupPath,
     [string]$HostedServiceName = '',
-    [bool]$RestartHostedService = $false
+    [bool]$ReinstallHostedService = $false,
+    [string]$HostedServiceInstallationRootPath = '',
+    [string]$HostedServiceProfileToken = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -325,8 +329,12 @@ Start-Sleep -Milliseconds 350
 
 $backupCreated = $false
 $hostedServiceStopped = $false
+$reinstallHostedServicePrepared = $ReinstallHostedService -and
+    -not [string]::IsNullOrWhiteSpace($HostedServiceName) -and
+    -not [string]::IsNullOrWhiteSpace($HostedServiceInstallationRootPath) -and
+    -not [string]::IsNullOrWhiteSpace($HostedServiceProfileToken)
 
-if ($RestartHostedService -and -not [string]::IsNullOrWhiteSpace($HostedServiceName)) {
+if (($reinstallHostedServicePrepared -or (-not $ReinstallHostedService -and -not [string]::IsNullOrWhiteSpace($HostedServiceName))) ) {
     try {
         $service = Get-Service -Name $HostedServiceName -ErrorAction Stop
         if ($service.Status -ne 'Stopped') {
@@ -352,7 +360,19 @@ try {
 
     Move-Item -LiteralPath $SourcePath -Destination $TargetPath -Force
 
-    if ($hostedServiceStopped -and -not [string]::IsNullOrWhiteSpace($HostedServiceName)) {
+    if ($reinstallHostedServicePrepared) {
+        $installArgs = @(
+            '--install-service',
+            $HostedServiceInstallationRootPath,
+            $HostedServiceProfileToken
+        )
+
+        $installProcess = Start-Process -FilePath $TargetPath -ArgumentList $installArgs -Wait -PassThru -WindowStyle Hidden
+        if ($installProcess.ExitCode -ne 0) {
+            throw "Автоматическая переустановка службы после обновления программы завершилась с кодом $($installProcess.ExitCode)."
+        }
+    }
+    elseif ($hostedServiceStopped -and -not [string]::IsNullOrWhiteSpace($HostedServiceName)) {
         Start-Service -Name $HostedServiceName -ErrorAction Stop
     }
 
