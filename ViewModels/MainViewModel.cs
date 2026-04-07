@@ -1223,9 +1223,11 @@ public sealed class MainViewModel : ObservableObject
 
         currentProcessPath = Path.GetFullPath(currentProcessPath);
         var serviceStatus = _serviceManager.GetStatus();
-        var reinstallHostedServiceAfterUpdate =
+        var restartHostedServiceDuringUpdate =
             serviceStatus.IsInstalled &&
-            _serviceManager.UsesExecutable(currentProcessPath) &&
+            _serviceManager.UsesExecutable(currentProcessPath);
+        var reinstallHostedServiceAfterUpdate =
+            restartHostedServiceDuringUpdate &&
             !string.IsNullOrWhiteSpace(serviceStatus.InstallationRootPath) &&
             !string.IsNullOrWhiteSpace(serviceStatus.ProfileToken);
         string? downloadedPath = null;
@@ -1251,6 +1253,7 @@ public sealed class MainViewModel : ObservableObject
                 currentProcessPath,
                 Process.GetCurrentProcess().Id,
                 WindowsServiceManager.ServiceName,
+                restartHostedServiceDuringUpdate,
                 reinstallHostedServiceAfterUpdate,
                 serviceStatus.InstallationRootPath,
                 serviceStatus.ProfileToken);

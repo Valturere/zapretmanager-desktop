@@ -26,7 +26,8 @@ public static class AdminTaskDispatcher
                 var installation = discovery.TryLoad(args[1]) ?? throw new InvalidOperationException("Папка zapret не найдена.");
                 var profile = installation.Profiles.FirstOrDefault(item =>
                     string.Equals(item.FilePath, args[2], StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(item.Name, args[2], StringComparison.OrdinalIgnoreCase));
+                    string.Equals(item.Name, args[2], StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(item.FileName, args[2], StringComparison.OrdinalIgnoreCase));
 
                 if (profile is null)
                 {
@@ -49,7 +50,8 @@ public static class AdminTaskDispatcher
                 var installation = discovery.TryLoad(args[1]) ?? throw new InvalidOperationException("Папка zapret не найдена.");
                 var profile = installation.Profiles.FirstOrDefault(item =>
                     string.Equals(item.FilePath, args[2], StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(item.Name, args[2], StringComparison.OrdinalIgnoreCase));
+                    string.Equals(item.Name, args[2], StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(item.FileName, args[2], StringComparison.OrdinalIgnoreCase));
 
                 if (profile is null)
                 {
