@@ -116,7 +116,8 @@ public sealed class ConnectivityTestService
 
     public TimeSpan GetEstimatedProfileProbeDuration()
     {
-        return ProbeStartDelay
+        return ZapretBatchLauncher.DefaultSilentStartTimeout
+               + ProbeStartDelay
                + ProbeTimeout
                + TimeSpan.FromMilliseconds(1200);
     }

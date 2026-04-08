@@ -15,7 +15,7 @@ public sealed class ZapretProcessService
             using var process = await ZapretBatchLauncher.StartAndAttachWinwsAsync(
                 installation,
                 profile,
-                TimeSpan.FromSeconds(10));
+                ZapretBatchLauncher.DefaultSilentStartTimeout);
             await Task.Delay(350);
             if (!process.HasExited)
             {

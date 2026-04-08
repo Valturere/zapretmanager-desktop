@@ -5,6 +5,8 @@ namespace ZapretManager.Services;
 
 internal static class ZapretBatchLauncher
 {
+    public static readonly TimeSpan DefaultSilentStartTimeout = TimeSpan.FromSeconds(25);
+
     public static async Task<Process> StartAndAttachWinwsAsync(
         ZapretInstallation installation,
         ConfigProfile profile,
@@ -51,10 +53,17 @@ internal static class ZapretBatchLauncher
                 return candidate;
             }
 
+            if (starterProcess.HasExited && starterProcess.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Профиль {profile.FileName} завершился до запуска winws.exe. Код выхода: {starterProcess.ExitCode}.");
+            }
+
             await Task.Delay(250);
         }
 
-        throw new InvalidOperationException($"Профиль {profile.FileName} не запустил winws.exe вовремя.");
+        throw new InvalidOperationException(
+            $"Профиль {profile.FileName} не успел запустить winws.exe. На некоторых ПК запуск может занимать больше времени. Повторите попытку.");
     }
 
     private static ProcessStartInfo CreateBatchStartInfo(ZapretInstallation installation, ConfigProfile profile, bool suppressUpdateCheck)

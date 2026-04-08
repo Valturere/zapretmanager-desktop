@@ -86,6 +86,8 @@ public sealed class MainViewModel : ObservableObject
     private string? _suspendedServiceRestoreRootPath;
     private bool _isRestoringSuspendedService;
     private CancellationTokenSource? _suspendedServiceRestoreWatchCancellation;
+    private bool _managerUpdatePromptShownThisSession;
+    private bool _managerUpdateLaunchRequested;
     private readonly Stopwatch _probeStopwatch = new();
     private readonly DispatcherTimer _probeProgressTimer;
     private int _probeProgressTotalProfiles;
@@ -559,21 +561,14 @@ public sealed class MainViewModel : ObservableObject
 
         if (AutoCheckUpdatesEnabled)
         {
-            await CheckUpdatesAsync(false);
+            await CheckManagerUpdateAsync(showNoUpdatesMessage: false, promptToInstall: true);
 
-            if (HasUpdate && _installation is not null)
+            if (_managerUpdateLaunchRequested)
             {
-                var shouldUpdate = DialogService.ConfirmCustom(
-                    $"Найдена новая версия: {(_updateLatestVersion ?? "доступно обновление")}{Environment.NewLine}Текущая версия: {_installation.Version}",
-                    "Zapret Manager",
-                    primaryButtonText: "Обновить",
-                    secondaryButtonText: "Закрыть");
-
-                if (shouldUpdate)
-                {
-                    await ApplyUpdateAsync();
-                }
+                return;
             }
+
+            await CheckUpdatesAsync(false);
         }
 
         await RefreshStatusAsync();
@@ -1248,6 +1243,11 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task CheckManagerUpdateAsync()
     {
+        await CheckManagerUpdateAsync(showNoUpdatesMessage: true, promptToInstall: true);
+    }
+
+    private async Task CheckManagerUpdateAsync(bool showNoUpdatesMessage, bool promptToInstall)
+    {
         EnsureManagerExecutableAvailable();
 
         ManagerUpdateInfo? updateInfo = null;
@@ -1264,25 +1264,31 @@ public sealed class MainViewModel : ObservableObject
 
         if (!updateInfo.IsUpdateAvailable)
         {
-            DialogService.ShowInfo("Новых обновлений программы не найдено.", "Zapret Manager");
+            if (showNoUpdatesMessage)
+            {
+                DialogService.ShowInfo("Новых обновлений программы не найдено.", "Zapret Manager");
+            }
             LastActionText = $"Действие: обновлений программы нет, версия {_managerVersion} актуальна";
             return;
         }
 
-        var mayRequireElevation = DirectoryMayRequireElevation();
-        var promptMessage =
-            $"Найдена новая версия программы: {updateInfo.LatestVersion}.{Environment.NewLine}" +
-            $"Текущая версия: {_managerVersion}.{Environment.NewLine}{Environment.NewLine}" +
-            "Скачать и установить её сейчас? Программа будет полностью закрыта и откроется снова после обновления." +
-            (mayRequireElevation
-                ? $"{Environment.NewLine}{Environment.NewLine}Если программа лежит в защищённой папке, Windows может попросить подтверждение прав администратора."
-                : string.Empty);
+        if (!promptToInstall)
+        {
+            LastActionText = $"Действие: найдено обновление программы {updateInfo.LatestVersion}";
+            return;
+        }
+
+        if (!showNoUpdatesMessage && _managerUpdatePromptShownThisSession)
+        {
+            return;
+        }
 
         var shouldInstall = DialogService.ConfirmCustom(
-            promptMessage,
+            $"Найдена новая версия программы: {updateInfo.LatestVersion}.{Environment.NewLine}Текущая: {_managerVersion}",
             "Zapret Manager",
             primaryButtonText: "Обновить",
-            secondaryButtonText: "Позже");
+            secondaryButtonText: "Закрыть");
+        _managerUpdatePromptShownThisSession = true;
 
         if (!shouldInstall)
         {
@@ -1346,6 +1352,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         LastActionText = $"Действие: перезапускаем ZapretManager для обновления до {updateInfo.LatestVersion}";
+        _managerUpdateLaunchRequested = true;
         if (System.Windows.Application.Current?.MainWindow is MainWindow mainWindow)
         {
             mainWindow.ShutdownForManagerUpdate();
