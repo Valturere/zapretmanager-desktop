@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using ZapretManager.Models;
 
 namespace ZapretManager.Services;
@@ -75,7 +76,28 @@ public sealed class ZapretProcessService
 
     public async Task StopCheckUpdatesShellsAsync()
     {
-        foreach (var processId in GetCheckUpdatesCmdProcessIds())
+        foreach (var processId in GetCheckUpdatesShellProcessIds())
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    public async Task StopProcessesUsingInstallationAsync(ZapretInstallation? installation)
+    {
+        if (installation is null)
+        {
+            return;
+        }
+
+        foreach (var processId in GetProcessIdsUsingInstallationRoot(installation.RootPath))
         {
             try
             {
@@ -111,6 +133,16 @@ public sealed class ZapretProcessService
         }
 
         return count;
+    }
+
+    public int GetProcessCountUsingInstallation(ZapretInstallation? installation)
+    {
+        if (installation is null)
+        {
+            return 0;
+        }
+
+        return GetProcessIdsUsingInstallationRoot(installation.RootPath).Length;
     }
 
     private static bool BelongsToInstallation(Process process, ZapretInstallation? installation)
@@ -171,33 +203,16 @@ public sealed class ZapretProcessService
 
         try
         {
-            using var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = "-NoProfile -ExecutionPolicy Bypass -Command \"Get-CimInstance Win32_Process -Filter \\\"name = 'cmd.exe'\\\" | ForEach-Object { '{0}|{1}' -f $_.ProcessId, (($_.CommandLine ?? '') -replace '[\\r\\n]+', ' ') }\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            });
+            var snapshots = GetProcessSnapshots("cmd.exe", "powershell.exe");
+            var seedIds = snapshots
+                .Where(snapshot =>
+                    snapshot.Name.Equals("cmd.exe", StringComparison.OrdinalIgnoreCase) &&
+                    snapshot.CommandLine.Contains(installation.RootPath, StringComparison.OrdinalIgnoreCase))
+                .Select(snapshot => snapshot.ProcessId)
+                .ToHashSet();
 
-            if (process is null)
-            {
-                return [];
-            }
-
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-
-            var rootPath = installation.RootPath;
-            return output
-                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-                .Select(line => line.Split('|', 2))
-                .Where(parts => parts.Length == 2 &&
-                                parts[1].Contains(rootPath, StringComparison.OrdinalIgnoreCase) &&
-                                int.TryParse(parts[0], out _))
-                .Select(parts => int.Parse(parts[0]))
-                .Distinct()
+            return ExpandDescendantProcessIds(snapshots, seedIds)
+                .Where(processId => processId != Environment.ProcessId)
                 .ToArray();
         }
         catch
@@ -206,41 +221,173 @@ public sealed class ZapretProcessService
         }
     }
 
-    private static IEnumerable<int> GetCheckUpdatesCmdProcessIds()
+    private static IEnumerable<int> GetCheckUpdatesShellProcessIds()
     {
         try
         {
-            using var process = Process.Start(new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = "-NoProfile -ExecutionPolicy Bypass -Command \"Get-CimInstance Win32_Process -Filter \\\"name = 'cmd.exe'\\\" | ForEach-Object { '{0}|{1}' -f $_.ProcessId, (($_.CommandLine ?? '') -replace '[\\r\\n]+', ' ') }\"",
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            });
+            var snapshots = GetProcessSnapshots("cmd.exe", "powershell.exe");
+            var seedIds = snapshots
+                .Where(snapshot => IsCheckUpdatesShell(snapshot.CommandLine))
+                .Select(snapshot => snapshot.ProcessId)
+                .ToHashSet();
 
-            if (process is null)
-            {
-                return [];
-            }
-
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-
-            return output
-                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-                .Select(line => line.Split('|', 2))
-                .Where(parts => parts.Length == 2 &&
-                                parts[1].Contains("service check_updates soft", StringComparison.OrdinalIgnoreCase) &&
-                                int.TryParse(parts[0], out _))
-                .Select(parts => int.Parse(parts[0]))
-                .Distinct()
+            return ExpandDescendantProcessIds(snapshots, seedIds)
+                .Where(processId => processId != Environment.ProcessId)
                 .ToArray();
         }
         catch
         {
             return [];
         }
+    }
+
+    private static int[] GetProcessIdsUsingInstallationRoot(string rootPath)
+    {
+        if (string.IsNullOrWhiteSpace(rootPath) || !Directory.Exists(rootPath))
+        {
+            return [];
+        }
+
+        try
+        {
+            var snapshots = GetProcessSnapshots();
+            var seedIds = snapshots
+                .Where(snapshot => ReferencesInstallationRoot(snapshot.ExecutablePath, snapshot.CommandLine, rootPath))
+                .Select(snapshot => snapshot.ProcessId)
+                .ToHashSet();
+
+            return ExpandDescendantProcessIds(snapshots, seedIds)
+                .Where(processId => processId != Environment.ProcessId)
+                .ToArray();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static IReadOnlyList<ProcessSnapshot> GetProcessSnapshots(params string[] names)
+    {
+        var filter = names is { Length: > 0 }
+            ? string.Join(" or ", names.Select(name => $"Name = '{name.Replace("'", "''")}'"))
+            : string.Empty;
+        var command = string.IsNullOrWhiteSpace(filter)
+            ? "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | ConvertTo-Json -Depth 2 -Compress"
+            : $"Get-CimInstance Win32_Process -Filter \\\"{filter}\\\" | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | ConvertTo-Json -Depth 2 -Compress";
+
+        using var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            Arguments = $"-NoProfile -ExecutionPolicy Bypass -Command \"{command}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        });
+
+        if (process is null)
+        {
+            return [];
+        }
+
+        var output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        if (string.IsNullOrWhiteSpace(output))
+        {
+            return [];
+        }
+
+        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        try
+        {
+            if (output.TrimStart().StartsWith("[", StringComparison.Ordinal))
+            {
+                return JsonSerializer.Deserialize<List<ProcessSnapshot>>(output, options) ?? [];
+            }
+
+            var item = JsonSerializer.Deserialize<ProcessSnapshot>(output, options);
+            return item is null ? [] : [item];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static IEnumerable<int> ExpandDescendantProcessIds(IReadOnlyList<ProcessSnapshot> snapshots, HashSet<int> seedIds)
+    {
+        if (seedIds.Count == 0)
+        {
+            return [];
+        }
+
+        var childrenByParentId = snapshots
+            .GroupBy(snapshot => snapshot.ParentProcessId)
+            .ToDictionary(group => group.Key, group => group.Select(item => item.ProcessId).ToArray());
+
+        var result = new HashSet<int>(seedIds);
+        var queue = new Queue<int>(seedIds);
+        while (queue.Count > 0)
+        {
+            var parentId = queue.Dequeue();
+            if (!childrenByParentId.TryGetValue(parentId, out var children))
+            {
+                continue;
+            }
+
+            foreach (var childId in children)
+            {
+                if (result.Add(childId))
+                {
+                    queue.Enqueue(childId);
+                }
+            }
+        }
+
+        return result;
+    }
+
+    private static bool IsCheckUpdatesShell(string commandLine)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return false;
+        }
+
+        return commandLine.Contains("check_updates", StringComparison.OrdinalIgnoreCase) ||
+               commandLine.Contains("service check_updates", StringComparison.OrdinalIgnoreCase) ||
+               (commandLine.Contains("Flowseal/zapret-discord-youtube", StringComparison.OrdinalIgnoreCase) &&
+                (commandLine.Contains("version.txt", StringComparison.OrdinalIgnoreCase) ||
+                 commandLine.Contains("releases/latest", StringComparison.OrdinalIgnoreCase) ||
+                 commandLine.Contains("Invoke-WebRequest", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static bool ReferencesInstallationRoot(string executablePath, string commandLine, string rootPath)
+    {
+        if (!string.IsNullOrWhiteSpace(executablePath))
+        {
+            try
+            {
+                if (Path.GetFullPath(executablePath).StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return !string.IsNullOrWhiteSpace(commandLine) &&
+               commandLine.Contains(rootPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private sealed class ProcessSnapshot
+    {
+        public int ProcessId { get; init; }
+        public int ParentProcessId { get; init; }
+        public string Name { get; init; } = string.Empty;
+        public string ExecutablePath { get; init; } = string.Empty;
+        public string CommandLine { get; init; } = string.Empty;
     }
 }

@@ -3172,9 +3172,13 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        var previousVersionNote = string.IsNullOrWhiteSpace(updateResult.BackupRootPath)
-            ? "Предыдущая версия не была сохранена."
-            : "Предыдущая версия сохранена. Её можно вернуть кнопкой «Откатить сборку».";
+        var previousVersionNote = updateResult.PreviousVersionWasBusy
+            ? string.IsNullOrWhiteSpace(updateResult.PreviousVersionBusyProcessSummary)
+                ? "Старая папка была занята другим процессом, поэтому новая сборка установлена рядом без сохранения версии для отката."
+                : $"Старая папка была занята процессом: {updateResult.PreviousVersionBusyProcessSummary}. Новая сборка установлена рядом без сохранения версии для отката."
+            : string.IsNullOrWhiteSpace(updateResult.BackupRootPath)
+                ? "Предыдущая версия не была сохранена."
+                : "Предыдущая версия сохранена. Её можно вернуть кнопкой «Откатить сборку».";
 
         if (!promptForAutomaticMode)
         {
@@ -3768,12 +3772,13 @@ public sealed class MainViewModel : ObservableObject
         {
             cancellationToken.ThrowIfCancellationRequested();
             await _processService.StopAsync(relatedInstallation);
+            await _processService.StopProcessesUsingInstallationAsync(relatedInstallation);
         }
 
         foreach (var relatedInstallation in relatedInstallations)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await WaitForProcessExitAsync(relatedInstallation, TimeSpan.FromSeconds(10));
+            await WaitForInstallationReleaseAsync(relatedInstallation, TimeSpan.FromSeconds(10));
             if (waitForDrivers)
             {
                 await WaitForDriverReleaseAsync(relatedInstallation.RootPath, TimeSpan.FromSeconds(20));
@@ -3990,6 +3995,21 @@ public sealed class MainViewModel : ObservableObject
         while (DateTime.UtcNow - startedAt < timeout)
         {
             if (_processService.GetRunningProcessCount(installation) == 0)
+            {
+                return;
+            }
+
+            await Task.Delay(700);
+        }
+    }
+
+    private async Task WaitForInstallationReleaseAsync(ZapretInstallation installation, TimeSpan timeout)
+    {
+        var startedAt = DateTime.UtcNow;
+        while (DateTime.UtcNow - startedAt < timeout)
+        {
+            if (_processService.GetRunningProcessCount(installation) == 0 &&
+                _processService.GetProcessCountUsingInstallation(installation) == 0)
             {
                 return;
             }

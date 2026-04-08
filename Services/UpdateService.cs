@@ -243,11 +243,15 @@ public sealed class UpdateService
         var package = await DownloadAndExtractAsync(downloadUrl, latestVersion, cancellationToken);
         string? newRootPath = null;
         string? previousVersionPath = null;
+        var previousVersionWasBusy = false;
+        var previousVersionMoved = false;
 
         var serviceManager = new WindowsServiceManager();
         var serviceStatus = serviceManager.GetStatus();
         var processService = new ZapretProcessService();
+        var fileLockInspector = new FileLockInspectorService();
         var currentInstallation = new ZapretDiscoveryService().TryLoad(rootPath);
+        string? busyProcessSummary = null;
 
         try
         {
@@ -264,15 +268,36 @@ public sealed class UpdateService
             if (currentInstallation is not null)
             {
                 await processService.StopAsync(currentInstallation);
-                await WaitForProcessExitAsync(processService, currentInstallation, TimeSpan.FromSeconds(20));
+                await processService.StopProcessesUsingInstallationAsync(currentInstallation);
+                await TryReleaseSafeLockingProcessesAsync(fileLockInspector, rootPath);
+                await WaitForInstallationReleaseAsync(processService, currentInstallation, TimeSpan.FromSeconds(20));
             }
 
             await WaitForDriverReleaseAsync(rootPath, TimeSpan.FromSeconds(60));
             previousVersionPath = GetPreviousVersionStoragePath(rootPath);
             await DeleteDirectoryAsync(previousVersionPath, cancellationToken);
             EnsureManagerStorageExists(rootPath);
-            Directory.Move(rootPath, previousVersionPath);
-            DisableInternalCheckUpdates(previousVersionPath);
+            try
+            {
+                Directory.Move(rootPath, previousVersionPath);
+                previousVersionMoved = true;
+                DisableInternalCheckUpdates(previousVersionPath);
+            }
+            catch (Exception ex) when (IsFolderBusyException(ex))
+            {
+                await TryReleaseSafeLockingProcessesAsync(fileLockInspector, rootPath);
+                if (TryMoveDirectory(rootPath, previousVersionPath))
+                {
+                    previousVersionMoved = true;
+                    DisableInternalCheckUpdates(previousVersionPath);
+                }
+                else
+                {
+                    busyProcessSummary = BuildBusyProcessSummary(fileLockInspector, rootPath);
+                    previousVersionWasBusy = true;
+                    previousVersionPath = null;
+                }
+            }
 
             newRootPath = GetUniquePath(Path.Combine(rootDirectory, BuildReleaseFolderName(package.Version)));
             Directory.CreateDirectory(newRootPath);
@@ -285,14 +310,17 @@ public sealed class UpdateService
                 ActiveRootPath = newRootPath,
                 InstalledVersion = package.Version,
                 BackupRootPath = previousVersionPath,
+                PreviousVersionWasBusy = previousVersionWasBusy,
+                PreviousVersionBusyProcessSummary = busyProcessSummary,
                 ServiceWasInstalled = serviceStatus.IsInstalled,
                 ServiceWasRunning = serviceStatus.IsRunning
             };
         }
-        catch
+        catch (Exception ex)
         {
             SafeDeleteDirectory(newRootPath);
-            if (!string.IsNullOrWhiteSpace(previousVersionPath) &&
+            if (previousVersionMoved &&
+                !string.IsNullOrWhiteSpace(previousVersionPath) &&
                 Directory.Exists(previousVersionPath) &&
                 !Directory.Exists(rootPath))
             {
@@ -305,7 +333,7 @@ public sealed class UpdateService
                 }
             }
 
-            throw;
+            throw CreateFriendlyUpdateException(ex);
         }
         finally
         {
@@ -774,18 +802,76 @@ public sealed class UpdateService
         return pendingDeletePath;
     }
 
-    private static async Task WaitForProcessExitAsync(ZapretProcessService processService, ZapretInstallation installation, TimeSpan timeout)
+    private static async Task WaitForInstallationReleaseAsync(ZapretProcessService processService, ZapretInstallation installation, TimeSpan timeout)
     {
         var startedAt = DateTime.UtcNow;
         while (DateTime.UtcNow - startedAt < timeout)
         {
-            if (processService.GetRunningProcessCount(installation) == 0)
+            if (processService.GetRunningProcessCount(installation) == 0 &&
+                processService.GetProcessCountUsingInstallation(installation) == 0)
             {
                 return;
             }
 
             await Task.Delay(700);
         }
+    }
+
+    private static bool IsFolderBusyException(Exception exception)
+    {
+        if (exception is IOException or UnauthorizedAccessException)
+        {
+            return true;
+        }
+
+        return exception.Message.Contains("being used by another process", StringComparison.OrdinalIgnoreCase) ||
+               exception.Message.Contains("используется другим процессом", StringComparison.OrdinalIgnoreCase) ||
+               exception.Message.Contains("не удается получить доступ к файлу", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static Exception CreateFriendlyUpdateException(Exception exception)
+    {
+        return IsFolderBusyException(exception)
+            ? new InvalidOperationException(
+                "Не удалось обновить сборку zapret, потому что старая папка занята другим процессом. Закройте окна cmd или PowerShell, Проводник и другие программы, открытые из этой папки, затем повторите обновление.",
+                exception)
+            : exception;
+    }
+
+    private static async Task TryReleaseSafeLockingProcessesAsync(FileLockInspectorService fileLockInspector, string rootPath)
+    {
+        var lockingProcesses = fileLockInspector.FindLockingProcesses(rootPath);
+        if (lockingProcesses.Count == 0)
+        {
+            return;
+        }
+
+        await fileLockInspector.CloseSafeProcessesAsync(lockingProcesses, rootPath);
+        await Task.Delay(900);
+    }
+
+    private static bool TryMoveDirectory(string sourcePath, string destinationPath)
+    {
+        try
+        {
+            Directory.Move(sourcePath, destinationPath);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string? BuildBusyProcessSummary(FileLockInspectorService fileLockInspector, string rootPath)
+    {
+        var lockingProcesses = fileLockInspector.FindLockingProcesses(rootPath);
+        if (lockingProcesses.Count == 0)
+        {
+            return null;
+        }
+
+        return fileLockInspector.BuildDisplaySummary(lockingProcesses);
     }
 
     private static async Task WaitForDriverReleaseAsync(string rootPath, TimeSpan timeout)
