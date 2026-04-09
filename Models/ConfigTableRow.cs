@@ -10,6 +10,7 @@ public sealed record ConfigTableRow
     public int? SuccessCount { get; init; }
     public int? TotalCount { get; init; }
     public int? PartialCount { get; init; }
+    public string SummaryBadgeText { get; init; } = string.Empty;
     public string Summary { get; init; } = string.Empty;
     public string Details { get; init; } = string.Empty;
 
@@ -19,12 +20,6 @@ public sealed record ConfigTableRow
         ? $"{SuccessCount.Value}/{TotalCount.Value}"
         : string.Empty;
     public string TotalCountText => TotalCount?.ToString() ?? string.Empty;
-    public string SummaryBadgeText => Outcome switch
-    {
-        ProbeOutcomeKind.Success => "✓",
-        ProbeOutcomeKind.Partial => "!",
-        _ => "✕"
-    };
     public string SummaryBodyText
     {
         get

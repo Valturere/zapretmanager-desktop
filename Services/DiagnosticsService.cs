@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Win32;
 using ZapretManager.Models;
 
@@ -12,6 +13,7 @@ public sealed class DiagnosticsService
 {
     private static readonly string[] ConflictingBypassServices = ["GoodbyeDPI", "discordfix_zapret", "winws1", "winws2"];
     private static readonly Encoding OemEncoding = Encoding.GetEncoding(866);
+    private static readonly string LocalAppDataPath = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
     private static readonly string[] VpnMarkers =
     [
         "VPN",
@@ -27,6 +29,13 @@ public sealed class DiagnosticsService
         "OUTLINE",
         "TUN2SOCKS",
         "RADMIN"
+    ];
+    private static readonly (string BrowserName, string LocalStatePath)[] BrowserSecureDnsCandidates =
+    [
+        ("Chrome", Path.Combine(LocalAppDataPath, "Google", "Chrome", "User Data", "Local State")),
+        ("Edge", Path.Combine(LocalAppDataPath, "Microsoft", "Edge", "User Data", "Local State")),
+        ("Brave", Path.Combine(LocalAppDataPath, "BraveSoftware", "Brave-Browser", "User Data", "Local State")),
+        ("Yandex", Path.Combine(LocalAppDataPath, "Yandex", "YandexBrowser", "User Data", "Local State"))
     ];
 
     public async Task<DiagnosticsReport> RunAsync(
@@ -477,15 +486,69 @@ public sealed class DiagnosticsService
     {
         try
         {
+            var windowsEnabled = IsWindowsSecureDnsConfigured();
+            var browserStatuses = GetBrowserSecureDnsStatuses();
+            var confirmedBrowsers = browserStatuses
+                .Where(status => status.IsConfirmed)
+                .Select(status => status.BrowserName)
+                .ToArray();
+            var automaticBrowsers = browserStatuses
+                .Where(status => !status.IsConfirmed)
+                .Select(status => status.BrowserName)
+                .ToArray();
+
+            var details = BuildSecureDnsDetails(windowsEnabled, confirmedBrowsers, automaticBrowsers);
+
+            if (windowsEnabled && confirmedBrowsers.Length > 0)
+            {
+                return new DiagnosticsCheckItem
+                {
+                    Title = "Secure DNS",
+                    Severity = DiagnosticsSeverity.Success,
+                    Message = $"Обнаружен Secure DNS в Windows и браузере: {string.Join(", ", confirmedBrowsers)}.",
+                    Details = details
+                };
+            }
+
+            if (windowsEnabled)
+            {
+                return new DiagnosticsCheckItem
+                {
+                    Title = "Secure DNS",
+                    Severity = DiagnosticsSeverity.Success,
+                    Message = "Обнаружен Secure DNS в Windows (DoH).",
+                    Details = details
+                };
+            }
+
+            if (confirmedBrowsers.Length > 0)
+            {
+                return new DiagnosticsCheckItem
+                {
+                    Title = "Secure DNS",
+                    Severity = DiagnosticsSeverity.Success,
+                    Message = $"Обнаружен Secure DNS в браузере: {string.Join(", ", confirmedBrowsers)}.",
+                    Details = details
+                };
+            }
+
+            if (automaticBrowsers.Length > 0)
+            {
+                return new DiagnosticsCheckItem
+                {
+                    Title = "Secure DNS",
+                    Severity = DiagnosticsSeverity.Warning,
+                    Message = $"В браузере включён Secure DNS в авто-режиме: {string.Join(", ", automaticBrowsers)}.",
+                    Details = details
+                };
+            }
+
             using var root = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\Dnscache\InterfaceSpecificParameters");
-            var encryptedDnsFound = HasEncryptedDnsFlag(root);
             return new DiagnosticsCheckItem
             {
                 Title = "Secure DNS",
-                Severity = encryptedDnsFound ? DiagnosticsSeverity.Success : DiagnosticsSeverity.Warning,
-                Message = encryptedDnsFound
-                    ? "Обнаружен включённый secure DNS."
-                    : "Secure DNS не обнаружен. Flowseal рекомендует настроить его в браузере или Windows."
+                Severity = HasEncryptedDnsFlag(root) ? DiagnosticsSeverity.Success : DiagnosticsSeverity.Warning,
+                Message = "Secure DNS не обнаружен. Flowseal рекомендует настроить его в браузере или Windows."
             };
         }
         catch (Exception ex)
@@ -497,6 +560,33 @@ public sealed class DiagnosticsService
                 Message = $"Не удалось проверить secure DNS: {ex.Message}"
             };
         }
+    }
+
+    private static string? BuildSecureDnsDetails(bool windowsEnabled, IReadOnlyList<string> confirmedBrowsers, IReadOnlyList<string> automaticBrowsers)
+    {
+        var parts = new List<string>();
+
+        if (windowsEnabled)
+        {
+            parts.Add("Windows DoH обнаружен.");
+        }
+
+        if (confirmedBrowsers.Count > 0)
+        {
+            parts.Add($"Браузерный Secure DNS обнаружен: {string.Join(", ", confirmedBrowsers)}.");
+        }
+
+        if (automaticBrowsers.Count > 0)
+        {
+            parts.Add($"Авто-режим Secure DNS включён: {string.Join(", ", automaticBrowsers)}.");
+        }
+
+        if (!windowsEnabled && (confirmedBrowsers.Count > 0 || automaticBrowsers.Count > 0))
+        {
+            parts.Add("Это влияет на браузер, но проверка конфигов и системные приложения используют системный DNS.");
+        }
+
+        return parts.Count > 0 ? string.Join(" ", parts) : null;
     }
 
     private static DiagnosticsCheckItem CheckHostsFile()
@@ -592,6 +682,139 @@ public sealed class DiagnosticsService
 
         return false;
     }
+
+    private static bool IsWindowsSecureDnsConfigured()
+    {
+        try
+        {
+            using var root = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\Dnscache\InterfaceSpecificParameters");
+            if (HasEncryptedDnsFlag(root) || HasModernDohMarkers(root))
+            {
+                return true;
+            }
+        }
+        catch
+        {
+            // ignored
+        }
+
+        try
+        {
+            var output = RunCommandCaptureAsync(
+                    "powershell.exe",
+                    "-NoProfile -Command \"Get-DnsClientDohServerAddress -ErrorAction SilentlyContinue | Where-Object { $_.DohTemplate -or $_.DohTemplateTemplate -or $_.AutoUpgrade -or $_.AllowFallbackToUdp } | ForEach-Object { $_.ServerAddress }\"",
+                    CancellationToken.None)
+                .GetAwaiter()
+                .GetResult();
+
+            return output
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Any(line => !string.IsNullOrWhiteSpace(line));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool HasModernDohMarkers(RegistryKey? key)
+    {
+        if (key is null)
+        {
+            return false;
+        }
+
+        if (key.GetValueNames().Any(name =>
+                string.Equals(name, "DohTemplate", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, "DohFlags", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, "AutoUpgrade", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, "AllowFallbackToUdp", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        foreach (var childName in key.GetSubKeyNames())
+        {
+            if (string.Equals(childName, "DohProfileSettings", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(childName, "DohInterfaceSettings", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(childName, "Doh", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(childName, "Doh6", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            using var child = key.OpenSubKey(childName);
+            if (HasModernDohMarkers(child))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static BrowserSecureDnsStatus[] GetBrowserSecureDnsStatuses()
+    {
+        var results = new List<BrowserSecureDnsStatus>();
+
+        foreach (var candidate in BrowserSecureDnsCandidates)
+        {
+            var status = TryReadBrowserSecureDnsStatus(candidate.BrowserName, candidate.LocalStatePath);
+            if (status is not null)
+            {
+                results.Add(status);
+            }
+        }
+
+        return [.. results];
+    }
+
+    private static BrowserSecureDnsStatus? TryReadBrowserSecureDnsStatus(string browserName, string localStatePath)
+    {
+        try
+        {
+            if (!File.Exists(localStatePath))
+            {
+                return null;
+            }
+
+            using var document = JsonDocument.Parse(File.ReadAllText(localStatePath));
+            if (!document.RootElement.TryGetProperty("dns_over_https", out var dnsNode) ||
+                dnsNode.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var mode = TryGetJsonString(dnsNode, "mode");
+            if (string.IsNullOrWhiteSpace(mode) || string.Equals(mode, "off", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            var templates = TryGetJsonString(dnsNode, "templates");
+            var isConfirmed =
+                string.Equals(mode, "secure", StringComparison.OrdinalIgnoreCase) ||
+                (!string.IsNullOrWhiteSpace(templates) && !string.Equals(mode, "off", StringComparison.OrdinalIgnoreCase));
+
+            return new BrowserSecureDnsStatus(browserName, mode, isConfirmed);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TryGetJsonString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        return property.GetString();
+    }
+
+    private sealed record BrowserSecureDnsStatus(string BrowserName, string Mode, bool IsConfirmed);
 
     private static bool ServiceExists(string serviceName)
     {

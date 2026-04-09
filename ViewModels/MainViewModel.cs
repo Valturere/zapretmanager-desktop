@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Linq;
 using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Win32;
@@ -48,6 +49,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _isRebuildingRows;
     private ConfigProfile? _selectedConfig;
     private ConfigTableRow? _selectedConfigRow;
+    private readonly HashSet<string> _selectedConfigPaths = new(StringComparer.OrdinalIgnoreCase);
     private GameModeOption? _selectedGameMode;
     private CancellationTokenSource? _probeCancellation;
     private string _installationPath = "Папка zapret ещё не выбрана";
@@ -78,7 +80,7 @@ public sealed class MainViewModel : ObservableObject
     private bool _useLightThemeEnabled;
     private string? _updateDownloadUrl;
     private string? _updateLatestVersion;
-    private string _probeButtonText = "Проверить";
+    private string _probeButtonText = "Проверить все";
     private double _busyProgressValue;
     private bool _busyProgressIsIndeterminate = true;
     private CancellationTokenSource? _notificationCancellation;
@@ -90,6 +92,8 @@ public sealed class MainViewModel : ObservableObject
     private bool _managerUpdateLaunchRequested;
     private readonly Stopwatch _probeStopwatch = new();
     private readonly DispatcherTimer _probeProgressTimer;
+    private static readonly TimeSpan MinProbeProfileEstimate = TimeSpan.FromSeconds(4);
+    private static readonly TimeSpan MaxProbeProfileEstimate = TimeSpan.FromSeconds(45);
     private int _probeProgressTotalProfiles;
     private int _probeProgressCompletedProfiles;
     private bool _probeProgressIncludesRestoreStep;
@@ -162,11 +166,12 @@ public sealed class MainViewModel : ObservableObject
         ClearDiscordCacheCommand = new AsyncRelayCommand(ClearDiscordCacheAsync, () => !IsBusy && !IsProbeRunning);
         StartCommand = new AsyncRelayCommand(StartSelectedAsync, () => _installation is not null && SelectedConfig is not null && !IsBusy);
         StopCommand = new AsyncRelayCommand(StopAsync, CanStopCurrentRuntime);
-        HideSelectedConfigCommand = new RelayCommand(HideSelectedConfig, () => _installation is not null && SelectedConfig is not null && !IsBusy && !IsProbeRunning);
+        HideSelectedConfigCommand = new RelayCommand(HideSelectedConfig, () => _installation is not null && GetSelectedProfilesForHide().Count > 0 && !IsBusy && !IsProbeRunning);
         AutoInstallCommand = new AsyncRelayCommand(RunAutomaticInstallAsync, () => !IsBusy && !IsProbeRunning);
         InstallServiceCommand = new AsyncRelayCommand(InstallServiceAsync, () => _installation is not null && SelectedConfig is not null && !IsBusy);
         RemoveServiceCommand = new AsyncRelayCommand(RemoveServiceAsync, () => _installation is not null && !IsBusy);
         RunTestsCommand = new RelayCommand(ToggleProbe, () => _installation is not null && ConfigRows.Count > 0 && (!IsBusy || IsProbeRunning));
+        RunSelectedTestCommand = new RelayCommand(ToggleSelectedProbe, () => _installation is not null && GetSelectedProfilesForProbe().Count > 0 && !IsBusy && !IsProbeRunning);
         CheckUpdatesCommand = new AsyncRelayCommand(() => CheckUpdatesAsync(true), () => _installation is not null && !IsBusy);
         ApplyUpdateCommand = new AsyncRelayCommand(() => ApplyUpdateAsync(), () => _installation is not null && HasUpdate && !IsBusy);
         RestorePreviousVersionCommand = new AsyncRelayCommand(RestorePreviousVersionAsync, () => _installation is not null && HasPreviousVersion && !IsBusy && !IsProbeRunning);
@@ -215,6 +220,7 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand InstallServiceCommand { get; }
     public AsyncRelayCommand RemoveServiceCommand { get; }
     public RelayCommand RunTestsCommand { get; }
+    public RelayCommand RunSelectedTestCommand { get; }
     public AsyncRelayCommand CheckUpdatesCommand { get; }
     public AsyncRelayCommand ApplyUpdateCommand { get; }
     public AsyncRelayCommand RestorePreviousVersionCommand { get; }
@@ -389,7 +395,7 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref _isProbeRunning, value))
             {
-                ProbeButtonText = value ? "Отмена" : "Проверить";
+                ProbeButtonText = value ? "Отмена" : "Проверить все";
                 RaiseCommandStates();
             }
         }
@@ -534,6 +540,21 @@ public sealed class MainViewModel : ObservableObject
                 SelectedSummaryText = BuildSelectedSummaryText(value.Summary, value.HasProbeResult);
             }
         }
+    }
+
+    public void UpdateSelectedConfigRows(IEnumerable<ConfigTableRow> rows)
+    {
+        _selectedConfigPaths.Clear();
+
+        foreach (var row in rows)
+        {
+            if (!string.IsNullOrWhiteSpace(row.FilePath))
+            {
+                _selectedConfigPaths.Add(row.FilePath);
+            }
+        }
+
+        RaiseCommandStates();
     }
 
     public GameModeOption? SelectedGameMode
@@ -689,6 +710,21 @@ public sealed class MainViewModel : ObservableObject
         return string.Equals(summary, "✓", StringComparison.Ordinal)
             ? "✓ Все цели доступны."
             : summary;
+    }
+
+    private static string BuildSummaryBadgeText(ConfigProbeResult? probeResult)
+    {
+        return ProbeBadgeHelper.BuildBadgeText(probeResult);
+    }
+
+    private static bool HasOnlyDnsIssues(ConfigProbeResult probeResult)
+    {
+        return ProbeBadgeHelper.HasOnlyDnsIssues(probeResult);
+    }
+
+    private static bool TargetHasOnlyDnsIssues(ConnectivityTargetResult result)
+    {
+        return ProbeBadgeHelper.HasOnlyDnsIssues(result);
     }
 
     private async Task RefreshAsync()
@@ -1202,13 +1238,21 @@ public sealed class MainViewModel : ObservableObject
 
         switch (window.SelectedAction)
         {
-            case HiddenConfigsAction.RestoreSelected when !string.IsNullOrWhiteSpace(window.SelectedFilePath):
-                _settings.HiddenConfigPaths.RemoveAll(path =>
-                    string.Equals(path, window.SelectedFilePath, StringComparison.OrdinalIgnoreCase));
+            case HiddenConfigsAction.RestoreSelected when window.SelectedFilePaths.Count > 0:
+                var selectedHiddenPaths = new HashSet<string>(window.SelectedFilePaths, StringComparer.OrdinalIgnoreCase);
+                _settings.HiddenConfigPaths.RemoveAll(path => selectedHiddenPaths.Contains(path));
                 _settingsService.Save(_settings);
                 RebuildConfigRows();
-                LastActionText = "Действие: скрытый конфиг возвращён";
-                ShowInlineNotification("Скрытый конфиг возвращён в основной список.");
+                if (selectedHiddenPaths.Count == 1)
+                {
+                    LastActionText = "Действие: скрытый конфиг возвращён";
+                    ShowInlineNotification("Скрытый конфиг возвращён в основной список.");
+                }
+                else
+                {
+                    LastActionText = $"Действие: возвращены {selectedHiddenPaths.Count} скрытых конфигов";
+                    ShowInlineNotification($"Возвращены {selectedHiddenPaths.Count} скрытых конфигов.");
+                }
                 break;
 
             case HiddenConfigsAction.RestoreAll:
@@ -1876,30 +1920,58 @@ public sealed class MainViewModel : ObservableObject
 
     private void HideSelectedConfig()
     {
-        if (_installation is null || SelectedConfig is null)
+        if (_installation is null)
+        {
+            return;
+        }
+
+        var profilesToHide = GetSelectedProfilesForHide();
+        if (profilesToHide.Count == 0)
         {
             return;
         }
 
         var serviceStatus = _serviceManager.GetStatus();
-        if (serviceStatus.IsInstalled &&
-            string.Equals(serviceStatus.ProfileName, SelectedConfig.Name, StringComparison.OrdinalIgnoreCase))
+        var serviceConflicts = profilesToHide
+            .Where(profile => serviceStatus.IsInstalled &&
+                              string.Equals(serviceStatus.ProfileName, profile.Name, StringComparison.OrdinalIgnoreCase))
+            .Select(profile => profile.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (serviceConflicts.Length > 0)
         {
-            ShowInlineNotification("Сначала удалите службу для этого конфига, а потом скрывайте его.", isError: true);
+            var conflictLabel = serviceConflicts.Length == 1
+                ? $"конфига {serviceConflicts[0]}"
+                : $"выбранных конфигов: {string.Join(", ", serviceConflicts)}";
+            ShowInlineNotification($"Сначала удалите службу для {conflictLabel}, а потом скрывайте.", isError: true);
             return;
         }
 
-        if (_processService.GetRunningProcessCount(_installation) > 0 &&
-            string.Equals(_settings.LastStartedConfigPath, SelectedConfig.FilePath, StringComparison.OrdinalIgnoreCase))
+        var hasRunningProfiles = _processService.GetRunningProcessCount(_installation) > 0;
+        var activeConflicts = profilesToHide
+            .Where(profile => hasRunningProfiles &&
+                              string.Equals(_settings.LastStartedConfigPath, profile.FilePath, StringComparison.OrdinalIgnoreCase))
+            .Select(profile => profile.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (activeConflicts.Length > 0)
         {
-            ShowInlineNotification("Сначала остановите активный профиль, а потом скрывайте его.", isError: true);
+            var conflictLabel = activeConflicts.Length == 1
+                ? $"профиль {activeConflicts[0]}"
+                : $"выбранные профили: {string.Join(", ", activeConflicts)}";
+            ShowInlineNotification($"Сначала остановите {conflictLabel}, а потом скрывайте.", isError: true);
             return;
         }
 
         if (!_settings.SkipHideConfigConfirmation)
         {
+            var confirmationMessage = profilesToHide.Count == 1
+                ? $"Скрыть конфиг {profilesToHide[0].Name}? Он исчезнет из основного списка и не будет участвовать в проверке."
+                : $"Скрыть выбранные конфиги ({profilesToHide.Count} шт.)? Они исчезнут из основного списка и не будут участвовать в проверке.";
             var confirmation = DialogService.ConfirmWithRemember(
-                $"Скрыть конфиг {SelectedConfig.Name}? Он исчезнет из основного списка и не будет участвовать в проверке.",
+                confirmationMessage,
                 "Zapret Manager",
                 rememberText: "Больше не спрашивать");
             if (!confirmation.Accepted)
@@ -1914,17 +1986,30 @@ public sealed class MainViewModel : ObservableObject
             }
         }
 
-        if (!_settings.HiddenConfigPaths.Any(path =>
-                string.Equals(path, SelectedConfig.FilePath, StringComparison.OrdinalIgnoreCase)))
+        foreach (var profile in profilesToHide)
         {
-            _settings.HiddenConfigPaths.Add(SelectedConfig.FilePath);
+            if (!_settings.HiddenConfigPaths.Any(path =>
+                    string.Equals(path, profile.FilePath, StringComparison.OrdinalIgnoreCase)))
+            {
+                _settings.HiddenConfigPaths.Add(profile.FilePath);
+            }
+
+            _probeResults.Remove(profile.Name);
         }
 
         _settingsService.Save(_settings);
-        _probeResults.Remove(SelectedConfig.Name);
-        LastActionText = $"Действие: конфиг {SelectedConfig.Name} скрыт";
         RebuildConfigRows();
-        ShowInlineNotification($"Конфиг {SelectedConfig.Name} скрыт.");
+
+        if (profilesToHide.Count == 1)
+        {
+            LastActionText = $"Действие: конфиг {profilesToHide[0].Name} скрыт";
+            ShowInlineNotification($"Конфиг {profilesToHide[0].Name} скрыт.");
+        }
+        else
+        {
+            LastActionText = $"Действие: скрыты {profilesToHide.Count} выбранных конфигов";
+            ShowInlineNotification($"Скрыты {profilesToHide.Count} выбранных конфигов.");
+        }
     }
 
     private async Task ClearDiscordCacheAsync()
@@ -2273,10 +2358,21 @@ public sealed class MainViewModel : ObservableObject
         ShowInlineNotification(notificationText);
     }
 
-    private async Task RunTestsAsync(bool allowDnsSuggestion = true, bool isAutomaticMode = false)
+    private async Task RunTestsAsync(
+        IReadOnlyList<ConfigProfile> profilesToProbe,
+        bool allowDnsSuggestion = true,
+        bool isAutomaticMode = false,
+        string runDescription = "проверку конфигов")
     {
         if (_installation is null)
         {
+            return;
+        }
+
+        if (profilesToProbe.Count == 0)
+        {
+            RecommendedConfigText = "Рекомендуемый конфиг: нет профилей для проверки";
+            LastActionText = "Действие: нет профилей для проверки";
             return;
         }
 
@@ -2286,6 +2382,7 @@ public sealed class MainViewModel : ObservableObject
         var wasCancelled = false;
         var failedWithException = false;
         var targetArg = string.IsNullOrWhiteSpace(ManualTarget) ? null : ManualTarget.Trim();
+        var probeDohTemplate = ResolveCurrentProbeDohTemplate();
 
         try
         {
@@ -2296,7 +2393,7 @@ public sealed class MainViewModel : ObservableObject
             RebuildConfigRows();
             RecommendedConfigText = "Рекомендуемый конфиг: идёт проверка...";
             RuntimeStatus = "Готовим проверку конфигов...";
-            LastActionText = "Действие: запускаем проверку конфигов";
+            LastActionText = $"Действие: запускаем {runDescription}";
 
             var serviceStatus = _serviceManager.GetStatus();
             shouldRestoreService = serviceStatus.IsRunning || ShouldRestoreSuspendedService(_installation);
@@ -2315,17 +2412,16 @@ public sealed class MainViewModel : ObservableObject
             await StopRelatedInstallationsAsync(_installation.RootPath, waitForDrivers: false, cancellationToken);
             await Task.Delay(500, cancellationToken);
 
-            var visibleProfiles = GetVisibleProfiles().ToList();
-            BeginProbeProgress(visibleProfiles.Count, shouldRestoreService || restoreProfile is not null);
-            for (var index = 0; index < visibleProfiles.Count; index++)
+            BeginProbeProgress(profilesToProbe.Count, shouldRestoreService || restoreProfile is not null);
+            for (var index = 0; index < profilesToProbe.Count; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var profile = visibleProfiles[index];
-                RuntimeStatus = $"Проверяем {profile.Name} ({index + 1}/{visibleProfiles.Count})";
-                LastActionText = $"Действие: проверяем конфиг {profile.Name} ({index + 1}/{visibleProfiles.Count})";
+                var profile = profilesToProbe[index];
+                RuntimeStatus = $"Проверяем {profile.Name} ({index + 1}/{profilesToProbe.Count})";
+                LastActionText = $"Действие: проверяем конфиг {profile.Name} ({index + 1}/{profilesToProbe.Count})";
                 MarkProbeProfileStarted(index);
 
-                var result = await _connectivityTestService.ProbeConfigAsync(_installation, profile, targetArg, cancellationToken);
+                var result = await _connectivityTestService.ProbeConfigAsync(_installation, profile, targetArg, probeDohTemplate, cancellationToken);
                 _probeResults[result.ConfigName] = result;
                 RebuildConfigRows();
                 MarkProbeProfileCompleted(index + 1);
@@ -2352,7 +2448,9 @@ public sealed class MainViewModel : ObservableObject
             }
 
             shouldOfferDnsSuggestion = allowDnsSuggestion && ShouldOfferDnsSuggestion();
-            RuntimeStatus = "Проверка конфигов завершена";
+            RuntimeStatus = profilesToProbe.Count == 1
+                ? "Проверка выбранного конфига завершена"
+                : "Проверка конфигов завершена";
             BusyEtaText = shouldRestoreService || restoreProfile is not null
                 ? "Осталось примерно: меньше 10 сек."
                 : string.Empty;
@@ -2361,9 +2459,13 @@ public sealed class MainViewModel : ObservableObject
         catch (OperationCanceledException)
         {
             wasCancelled = true;
-            RuntimeStatus = "Проверка конфигов остановлена пользователем";
+            RuntimeStatus = profilesToProbe.Count == 1
+                ? "Проверка выбранного конфига остановлена пользователем"
+                : "Проверка конфигов остановлена пользователем";
             RecommendedConfigText = "Рекомендуемый конфиг: проверка остановлена";
-            LastActionText = "Действие: проверка конфигов отменена";
+            LastActionText = profilesToProbe.Count == 1
+                ? "Действие: проверка выбранного конфига отменена"
+                : "Действие: проверка конфигов отменена";
         }
         catch (Exception ex)
         {
@@ -2373,6 +2475,8 @@ public sealed class MainViewModel : ObservableObject
         }
         finally
         {
+            SaveProbeProfileEstimate();
+
             if (_installation is not null)
             {
                 try
@@ -2412,11 +2516,27 @@ public sealed class MainViewModel : ObservableObject
 
         if (!wasCancelled &&
             !failedWithException &&
-            allowDnsSuggestion &&
-            shouldOfferDnsSuggestion &&
-            await TrySuggestDnsAndRerunAsync(isAutomaticMode, targetArg))
+            _installation is not null &&
+            ShouldDiagnoseDnsIssue())
         {
-            return;
+            var dnsDiagnosis = await DiagnoseDnsIssueAsync(_installation, targetArg);
+            if (!string.IsNullOrWhiteSpace(dnsDiagnosis))
+            {
+                if (allowDnsSuggestion &&
+                    shouldOfferDnsSuggestion &&
+                    await TrySuggestDnsAndRerunAsync(isAutomaticMode, dnsDiagnosis))
+                {
+                    return;
+                }
+
+                if (!string.Equals(GetCurrentDnsProfileKey(), DnsService.SystemProfileKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    ShowInlineNotification(
+                        $"{dnsDiagnosis} Проверка использует системный DNS/DoH, поэтому результат может отличаться от браузера с Secure DNS.",
+                        isError: true,
+                        durationMs: 8200);
+                }
+            }
         }
     }
 
@@ -2493,7 +2613,7 @@ public sealed class MainViewModel : ObservableObject
                 durationMs: 6500);
         }
 
-        await RunTestsAsync(allowDnsSuggestion: true, isAutomaticMode: true);
+        await RunTestsAsync(GetVisibleProfiles().ToList(), allowDnsSuggestion: true, isAutomaticMode: true);
 
         if (IsProbeRunning || _installation is null)
         {
@@ -2597,10 +2717,9 @@ public sealed class MainViewModel : ObservableObject
         return warnings;
     }
 
-    private bool ShouldOfferDnsSuggestion()
+    private bool ShouldDiagnoseDnsIssue()
     {
-        if (_probeResults.Count == 0 ||
-            !string.Equals(GetCurrentDnsProfileKey(), DnsService.SystemProfileKey, StringComparison.OrdinalIgnoreCase))
+        if (_probeResults.Count == 0)
         {
             return false;
         }
@@ -2610,19 +2729,19 @@ public sealed class MainViewModel : ObservableObject
             result.PrimaryFailedTargetNames.Count > 0);
     }
 
-    private async Task<bool> TrySuggestDnsAndRerunAsync(bool isAutomaticMode, string? targetArg)
+    private bool ShouldOfferDnsSuggestion()
     {
-        if (_installation is null)
+        if (!ShouldDiagnoseDnsIssue() ||
+            !string.Equals(GetCurrentDnsProfileKey(), DnsService.SystemProfileKey, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }
 
-        var diagnosis = await DiagnoseDnsIssueAsync(_installation, targetArg);
-        if (diagnosis is null)
-        {
-            return false;
-        }
+        return true;
+    }
 
+    private async Task<bool> TrySuggestDnsAndRerunAsync(bool isAutomaticMode, string diagnosis)
+    {
         const string suggestedDnsKey = DnsService.GoogleProfileKey;
         var suggestedDnsLabel = _dnsService.GetProfileLabel(
             suggestedDnsKey,
@@ -2660,7 +2779,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         ShowInlineNotification($"Включён {suggestedDnsLabel}. Повторяем проверку...");
-        await RunTestsAsync(allowDnsSuggestion: false, isAutomaticMode);
+        await RunTestsAsync(GetVisibleProfiles().ToList(), allowDnsSuggestion: false, isAutomaticMode);
         return true;
     }
 
@@ -2751,7 +2870,38 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        _ = RunTestsAsync(allowDnsSuggestion: true, isAutomaticMode: false);
+        _ = RunTestsAsync(GetVisibleProfiles().ToList(), allowDnsSuggestion: true, isAutomaticMode: false, runDescription: "проверку конфигов");
+    }
+
+    private void ToggleSelectedProbe()
+    {
+        if (IsProbeRunning || _installation is null)
+        {
+            return;
+        }
+
+        try
+        {
+            EnsureManagerExecutableAvailable();
+        }
+        catch (Exception ex)
+        {
+            LastActionText = "Действие: проверка недоступна после переноса программы";
+            DialogService.ShowError(ex, "Zapret Manager");
+            return;
+        }
+
+        var selectedProfiles = GetSelectedProfilesForProbe();
+        if (selectedProfiles.Count == 0)
+        {
+            return;
+        }
+
+        var runDescription = selectedProfiles.Count == 1
+            ? $"проверку конфига {selectedProfiles[0].Name}"
+            : $"проверку {selectedProfiles.Count} выбранных конфигов";
+
+        _ = RunTestsAsync(selectedProfiles, allowDnsSuggestion: true, isAutomaticMode: false, runDescription: runDescription);
     }
 
     private void CancelProbe()
@@ -2764,6 +2914,34 @@ public sealed class MainViewModel : ObservableObject
         return Configs.FirstOrDefault(item =>
                    string.Equals(item.FilePath, _settings.LastStartedConfigPath, StringComparison.OrdinalIgnoreCase))
                ?? SelectedConfig;
+    }
+
+    private IReadOnlyList<ConfigProfile> GetSelectedProfilesForProbe()
+    {
+        var visibleProfiles = GetVisibleProfiles().ToList();
+        if (visibleProfiles.Count == 0)
+        {
+            return [];
+        }
+
+        if (_selectedConfigPaths.Count > 0)
+        {
+            var selectedProfiles = visibleProfiles
+                .Where(item => _selectedConfigPaths.Contains(item.FilePath))
+                .ToList();
+
+            if (selectedProfiles.Count > 0)
+            {
+                return selectedProfiles;
+            }
+        }
+
+        return SelectedConfig is null ? [] : [SelectedConfig];
+    }
+
+    private IReadOnlyList<ConfigProfile> GetSelectedProfilesForHide()
+    {
+        return GetSelectedProfilesForProbe();
     }
 
     private ConfigProfile? ResolveLastInstalledServiceProfile()
@@ -3043,6 +3221,7 @@ public sealed class MainViewModel : ObservableObject
                 SuccessCount = probeResult?.SuccessCount,
                 TotalCount = probeResult?.TotalCount,
                 PartialCount = probeResult?.PartialCount,
+                SummaryBadgeText = BuildSummaryBadgeText(probeResult),
                 Summary = probeResult?.Summary ?? string.Empty,
                 Details = probeResult?.Details ?? string.Empty
             });
@@ -3573,6 +3752,33 @@ public sealed class MainViewModel : ObservableObject
             : DnsService.SystemProfileKey;
     }
 
+    private string? ResolveCurrentProbeDohTemplate()
+    {
+        try
+        {
+            var profiles = _dnsService.GetPresetDefinitions(
+                _settings.CustomDnsPrimary,
+                _settings.CustomDnsSecondary,
+                _settings.CustomDnsDohTemplate);
+            var currentStatus = _dnsService.GetCurrentStatus();
+            var matchedKey = _dnsService.MatchPresetKey(currentStatus, _settings.CustomDnsPrimary, _settings.CustomDnsSecondary);
+            var profile = !string.IsNullOrWhiteSpace(matchedKey)
+                ? profiles.FirstOrDefault(item => string.Equals(item.Key, matchedKey, StringComparison.OrdinalIgnoreCase))
+                : null;
+
+            profile ??= profiles.FirstOrDefault(item =>
+                string.Equals(item.Key, GetCurrentDnsProfileKey(), StringComparison.OrdinalIgnoreCase));
+
+            return string.IsNullOrWhiteSpace(profile?.DohTemplate)
+                ? null
+                : profile.DohTemplate;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public string GetTrayCustomDnsLabel()
     {
         if (!HasCustomDnsConfigured())
@@ -3656,6 +3862,7 @@ public sealed class MainViewModel : ObservableObject
         InstallServiceCommand.NotifyCanExecuteChanged();
         RemoveServiceCommand.NotifyCanExecuteChanged();
         RunTestsCommand.NotifyCanExecuteChanged();
+        RunSelectedTestCommand.NotifyCanExecuteChanged();
         CheckUpdatesCommand.NotifyCanExecuteChanged();
         ApplyUpdateCommand.NotifyCanExecuteChanged();
         RestorePreviousVersionCommand.NotifyCanExecuteChanged();
@@ -4392,7 +4599,7 @@ public sealed class MainViewModel : ObservableObject
         _probeProgressIncludesRestoreStep = includeRestoreStep;
         _probeCurrentProfileActive = totalProfiles > 0;
         _probeCurrentProfileStartedAtUtc = DateTime.UtcNow;
-        _probeInitialProfileEstimate = _connectivityTestService.GetEstimatedProfileProbeDuration();
+        _probeInitialProfileEstimate = ResolveInitialProbeProfileEstimate();
         _probeLastDisplayedRemaining = null;
         _probeLastEtaUpdatedAtUtc = DateTime.UtcNow;
         BusyProgressIsIndeterminate = false;
@@ -4432,7 +4639,7 @@ public sealed class MainViewModel : ObservableObject
         if (_probeProgressCompletedProfiles > 0 && _probeStopwatch.Elapsed > TimeSpan.Zero)
         {
             var observedAverage = TimeSpan.FromTicks(_probeStopwatch.Elapsed.Ticks / _probeProgressCompletedProfiles);
-            averageProfileDuration = TimeSpan.FromTicks(Math.Max(_probeInitialProfileEstimate.Ticks, observedAverage.Ticks));
+            averageProfileDuration = BlendProbeProfileEstimate(_probeInitialProfileEstimate, observedAverage, _probeProgressCompletedProfiles);
         }
 
         var partialProgress = 0d;
@@ -4461,6 +4668,12 @@ public sealed class MainViewModel : ObservableObject
             remaining += TimeSpan.FromSeconds(2);
         }
 
+        if (_probeProgressCompletedProfiles < 2)
+        {
+            BusyEtaText = "Оцениваем оставшееся время...";
+            return;
+        }
+
         BusyEtaText = $"Осталось примерно: {FormatBusyDuration(SmoothProbeRemainingEstimate(remaining))}";
     }
 
@@ -4481,6 +4694,72 @@ public sealed class MainViewModel : ObservableObject
         BusyEtaText = string.Empty;
     }
 
+    private TimeSpan ResolveInitialProbeProfileEstimate()
+    {
+        if (_settings.ProbeAverageProfileSeconds is > 0)
+        {
+            return ClampProbeProfileEstimate(TimeSpan.FromSeconds(_settings.ProbeAverageProfileSeconds.Value));
+        }
+
+        return ClampProbeProfileEstimate(_connectivityTestService.GetEstimatedProfileProbeDuration());
+    }
+
+    private static TimeSpan ClampProbeProfileEstimate(TimeSpan duration)
+    {
+        if (duration < MinProbeProfileEstimate)
+        {
+            return MinProbeProfileEstimate;
+        }
+
+        if (duration > MaxProbeProfileEstimate)
+        {
+            return MaxProbeProfileEstimate;
+        }
+
+        return duration;
+    }
+
+    private static TimeSpan BlendProbeProfileEstimate(TimeSpan seedEstimate, TimeSpan observedAverage, int completedProfiles)
+    {
+        var clampedSeed = ClampProbeProfileEstimate(seedEstimate);
+        var clampedObserved = ClampProbeProfileEstimate(observedAverage);
+        var seedWeight = Math.Max(0, 3 - completedProfiles);
+        var totalWeight = completedProfiles + seedWeight;
+        if (totalWeight <= 0)
+        {
+            return clampedSeed;
+        }
+
+        var blendedTicks = ((clampedSeed.Ticks * seedWeight) + (clampedObserved.Ticks * completedProfiles)) / totalWeight;
+        return ClampProbeProfileEstimate(TimeSpan.FromTicks(blendedTicks));
+    }
+
+    private void SaveProbeProfileEstimate()
+    {
+        if (_probeProgressCompletedProfiles < 2 || _probeStopwatch.Elapsed <= TimeSpan.Zero)
+        {
+            return;
+        }
+
+        var observedAverage = TimeSpan.FromTicks(_probeStopwatch.Elapsed.Ticks / _probeProgressCompletedProfiles);
+        var clampedAverage = ClampProbeProfileEstimate(observedAverage);
+        var roundedSeconds = Math.Round(clampedAverage.TotalSeconds, 1);
+        if (_settings.ProbeAverageProfileSeconds.HasValue &&
+            Math.Abs(_settings.ProbeAverageProfileSeconds.Value - roundedSeconds) < 0.1d)
+        {
+            return;
+        }
+
+        try
+        {
+            _settings.ProbeAverageProfileSeconds = roundedSeconds;
+            _settingsService.Save(_settings);
+        }
+        catch
+        {
+        }
+    }
+
     private TimeSpan SmoothProbeRemainingEstimate(TimeSpan remaining)
     {
         var now = DateTime.UtcNow;
@@ -4495,19 +4774,15 @@ public sealed class MainViewModel : ObservableObject
         var elapsed = _probeLastEtaUpdatedAtUtc == default ? TimeSpan.Zero : now - _probeLastEtaUpdatedAtUtc;
         _probeLastEtaUpdatedAtUtc = now;
 
-        var nextExpected = previous > TimeSpan.FromSeconds(10)
-            ? previous - elapsed
-            : previous;
-        if (nextExpected < TimeSpan.FromSeconds(10))
+        var nextExpected = previous - elapsed;
+        if (nextExpected < TimeSpan.Zero)
         {
-            nextExpected = TimeSpan.FromSeconds(10);
+            nextExpected = TimeSpan.Zero;
         }
 
-        var smoothed = remaining <= nextExpected ? remaining : nextExpected;
-        if (smoothed < TimeSpan.FromSeconds(10))
-        {
-            smoothed = TimeSpan.FromSeconds(10);
-        }
+        var smoothed = remaining < nextExpected
+            ? remaining
+            : nextExpected;
 
         _probeLastDisplayedRemaining = smoothed;
         return smoothed;

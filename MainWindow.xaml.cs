@@ -11,6 +11,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Reflection;
+using System.Linq;
 using Drawing = System.Drawing;
 using Forms = System.Windows.Forms;
 using ZapretManager.Models;
@@ -628,6 +629,17 @@ public partial class MainWindow : Window
         ApplyConfigGridSorting(e.Column.SortMemberPath);
     }
 
+    private void ConfigGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.DataGrid { SelectedItems: IList selectedItems } ||
+            DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        viewModel.UpdateSelectedConfigRows(selectedItems.OfType<ConfigTableRow>());
+    }
+
     private void ConfigHeaderSortButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not System.Windows.Controls.Button { Tag: string sortMemberPath } ||
@@ -765,15 +777,27 @@ public partial class MainWindow : Window
         SetBrushColor("ScrollTrackBrush", useLightTheme ? "#E4EEF7" : "#102235");
         SetBrushColor("ScrollThumbBrush", useLightTheme ? "#8EA9C2" : "#4A6A86");
         SetBrushColor("ScrollThumbHoverBrush", useLightTheme ? "#7897B5" : "#5B7C98");
+        SetBrushColor("ProbeBadgeSuccessBackgroundBrush", useLightTheme ? "#D9EDE3" : "#27423D");
+        SetBrushColor("ProbeBadgeSuccessBorderBrush", useLightTheme ? "#A8C4B7" : "#6C9184");
+        SetBrushColor("ProbeBadgeSuccessForegroundBrush", useLightTheme ? "#2F8E63" : "#7FE0B4");
+        SetBrushColor("ProbeBadgePartialBackgroundBrush", useLightTheme ? "#EEE4D3" : "#4A422E");
+        SetBrushColor("ProbeBadgePartialBorderBrush", useLightTheme ? "#C7B18A" : "#A89566");
+        SetBrushColor("ProbeBadgePartialForegroundBrush", useLightTheme ? "#9A6E1D" : "#E3C168");
+        SetBrushColor("ProbeBadgeFailureBackgroundBrush", useLightTheme ? "#ECDEDF" : "#4F3537");
+        SetBrushColor("ProbeBadgeFailureBorderBrush", useLightTheme ? "#C29A9A" : "#B88484");
+        SetBrushColor("ProbeBadgeFailureForegroundBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
+        SetBrushColor("ProbeBadgeNeutralBackgroundBrush", useLightTheme ? "#EEF5FB" : "#0C1A28");
+        SetBrushColor("ProbeBadgeNeutralBorderBrush", useLightTheme ? "#9CB7CF" : "#274A6B");
+        SetBrushColor("ProbeBadgeNeutralForegroundBrush", useLightTheme ? "#5E7893" : "#9AB2CD");
         SetBrushColor("SummarySuccessBadgeBrush", useLightTheme ? "#D9EDE3" : "#27423D");
         SetBrushColor("SummarySuccessBadgeBorderBrush", useLightTheme ? "#A8C4B7" : "#6C9184");
-        SetBrushColor("SummarySuccessBadgeIconBrush", useLightTheme ? "#2E6350" : "#FFFFFF");
+        SetBrushColor("SummarySuccessBadgeIconBrush", useLightTheme ? "#2E6350" : "#7FE0B4");
         SetBrushColor("SummaryPartialBadgeBrush", useLightTheme ? "#EEE4D3" : "#4A422E");
         SetBrushColor("SummaryPartialBadgeBorderBrush", useLightTheme ? "#C7B18A" : "#A89566");
-        SetBrushColor("SummaryPartialBadgeIconBrush", useLightTheme ? "#755B2F" : "#FFFFFF");
-        SetBrushColor("SummaryFailureBadgeBrush", useLightTheme ? "#EEDDE3" : "#4C3941");
-        SetBrushColor("SummaryFailureBadgeBorderBrush", useLightTheme ? "#C8A8B2" : "#B28A97");
-        SetBrushColor("SummaryFailureBadgeIconBrush", useLightTheme ? "#764754" : "#FFFFFF");
+        SetBrushColor("SummaryPartialBadgeIconBrush", useLightTheme ? "#755B2F" : "#E3C168");
+        SetBrushColor("SummaryFailureBadgeBrush", useLightTheme ? "#ECDEDF" : "#4F3537");
+        SetBrushColor("SummaryFailureBadgeBorderBrush", useLightTheme ? "#C29A9A" : "#B88484");
+        SetBrushColor("SummaryFailureBadgeIconBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
 
         ApplyWindowFrame(useLightTheme);
         ApplyThemeToOpenWindows(useLightTheme);

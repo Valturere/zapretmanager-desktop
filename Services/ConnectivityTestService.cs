@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Globalization;
+using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.WebSockets;
 using System.Security.Authentication;
@@ -13,14 +16,28 @@ public sealed class ConnectivityTestService
 {
     private static readonly TimeSpan ProbeStartDelay = TimeSpan.FromMilliseconds(1200);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMilliseconds(3000);
+    private static readonly TimeSpan TypicalSilentStartDuration = TimeSpan.FromSeconds(4);
+    private static readonly HttpClient DnsHttpClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(3)
+    };
     private readonly ZapretProcessService _processService = new();
     private sealed record ProtocolProbeDefinition(string Label, string[] CurlArgs, SslProtocols? RequiredProtocols = null);
-    private sealed record ProtocolProbeResult(string Label, bool Success, bool IsSupported, string StatusText, string Details, long? DurationMs);
+    private sealed record ProtocolProbeResult(
+        string Label,
+        bool Success,
+        bool IsSupported,
+        string StatusText,
+        string Details,
+        long? DurationMs,
+        bool UsedDnsFallback = false);
+    private sealed record DohResolutionResult(string? Address, string? ErrorMessage);
 
     public async Task<ConfigProbeResult> ProbeConfigAsync(
         ZapretInstallation installation,
         ConfigProfile profile,
         string? customTarget,
+        string? dohTemplate = null,
         CancellationToken cancellationToken = default)
     {
         var targets = LoadTargets(installation, customTarget).ToArray();
@@ -28,6 +45,9 @@ public sealed class ConnectivityTestService
         {
             throw new InvalidOperationException("Не найдено ни одной цели для проверки.");
         }
+
+        var dohResolutionCache = new ConcurrentDictionary<string, Lazy<Task<DohResolutionResult>>>(
+            StringComparer.OrdinalIgnoreCase);
 
         await _processService.StopAsync(installation);
         await WaitForWinwsStateAsync(installation, shouldBeRunning: false, cancellationToken);
@@ -38,7 +58,7 @@ public sealed class ConnectivityTestService
             await WaitForWinwsStateAsync(installation, shouldBeRunning: true, cancellationToken);
             await Task.Delay(ProbeStartDelay, cancellationToken);
 
-            var results = await Task.WhenAll(targets.Select(target => ProbeTargetAsync(target, cancellationToken)));
+            var results = await Task.WhenAll(targets.Select(target => ProbeTargetAsync(target, dohTemplate, dohResolutionCache, cancellationToken)));
             var scoredResults = results
                 .Where(result => !result.IsDiagnosticOnly)
                 .ToArray();
@@ -116,7 +136,7 @@ public sealed class ConnectivityTestService
 
     public TimeSpan GetEstimatedProfileProbeDuration()
     {
-        return ZapretBatchLauncher.DefaultSilentStartTimeout
+        return TypicalSilentStartDuration
                + ProbeStartDelay
                + ProbeTimeout
                + TimeSpan.FromMilliseconds(1200);
@@ -169,7 +189,11 @@ public sealed class ConnectivityTestService
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
     }
 
-    private static async Task<ConnectivityTargetResult> ProbeTargetAsync(ConnectivityTarget target, CancellationToken cancellationToken)
+    private static async Task<ConnectivityTargetResult> ProbeTargetAsync(
+        ConnectivityTarget target,
+        string? dohTemplate,
+        ConcurrentDictionary<string, Lazy<Task<DohResolutionResult>>> dohResolutionCache,
+        CancellationToken cancellationToken)
     {
         if (target.Url is null)
         {
@@ -178,21 +202,32 @@ public sealed class ConnectivityTestService
 
         var pingTask = ProbePingHostAsync(target.PingHost);
         var primaryProtocolChecks = await Task.WhenAll(GetPrimaryProtocolDefinitions(target.Url ?? throw new InvalidOperationException("Для основной цели не указан URL."))
-            .Select(definition => ProbePrimaryProtocolAsync(target.Url!, definition, cancellationToken)));
+            .Select(definition => ProbePrimaryProtocolAsync(target.Url!, definition, dohTemplate, dohResolutionCache, cancellationToken)));
         var protocolChecks = ShouldProbeDiscordGatewayWebSocket(target)
             ? [.. primaryProtocolChecks, await ProbeDiscordGatewayWebSocketAsync(cancellationToken)]
             : primaryProtocolChecks;
         var pingMilliseconds = await pingTask;
+        if ((!pingMilliseconds.HasValue || pingMilliseconds.Value <= 0) &&
+            !string.IsNullOrWhiteSpace(dohTemplate) &&
+            Uri.TryCreate(dohTemplate, UriKind.Absolute, out var dohUri))
+        {
+            var dohResolution = await ResolveHostViaDohAsync(target.PingHost, dohUri, dohResolutionCache, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(dohResolution.Address))
+            {
+                pingMilliseconds = await ProbePingAddressAsync(dohResolution.Address);
+            }
+        }
 
         var supportedChecks = protocolChecks
             .Where(result => result.IsSupported)
             .ToArray();
         var successCount = supportedChecks.Count(result => result.Success);
+        var dnsFallbackCount = supportedChecks.Count(result => result.UsedDnsFallback);
         var outcome = supportedChecks.Length == 0
             ? ProbeOutcomeKind.Partial
-            : successCount == supportedChecks.Length
+            : successCount == supportedChecks.Length && dnsFallbackCount == 0
             ? ProbeOutcomeKind.Success
-            : successCount > 0
+            : successCount > 0 || dnsFallbackCount > 0
                 ? ProbeOutcomeKind.Partial
                 : ProbeOutcomeKind.Failure;
         var latencyValues = protocolChecks
@@ -211,6 +246,7 @@ public sealed class ConnectivityTestService
             TargetName = target.Name,
             Success = outcome == ProbeOutcomeKind.Success,
             Outcome = outcome,
+            HasDnsFallback = dnsFallbackCount > 0,
             HttpStatus = string.Join(" ", protocolChecks.Select(result => $"{result.Label}:{result.StatusText}")),
             Details = BuildPrimaryProtocolDetails(target.Name, outcome, protocolChecks),
             PingMilliseconds = effectivePing,
@@ -219,7 +255,12 @@ public sealed class ConnectivityTestService
         };
     }
 
-    private static async Task<ProtocolProbeResult> ProbePrimaryProtocolAsync(Uri targetUri, ProtocolProbeDefinition definition, CancellationToken cancellationToken)
+    private static async Task<ProtocolProbeResult> ProbePrimaryProtocolAsync(
+        Uri targetUri,
+        ProtocolProbeDefinition definition,
+        string? dohTemplate,
+        ConcurrentDictionary<string, Lazy<Task<DohResolutionResult>>> dohResolutionCache,
+        CancellationToken cancellationToken)
     {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(ProbeTimeout);
@@ -239,11 +280,24 @@ public sealed class ConnectivityTestService
             var standardOutput = (await standardOutputTask).Trim();
             var standardError = (await standardErrorTask).Trim();
 
-            var dnsHijack = Regex.IsMatch(
-                $"{standardOutput} {standardError}",
-                "Could not resolve host|certificate|SSL certificate problem|self[- ]?signed|certificate verify failed|unable to get local issuer certificate",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-            if (dnsHijack)
+            if (IsDnsResolutionFailure(standardOutput, standardError))
+            {
+                var fallbackResult = await TryProbeViaDohAsync(targetUri, definition, dohTemplate, dohResolutionCache, cancellationToken);
+                if (fallbackResult is not null)
+                {
+                    return fallbackResult;
+                }
+
+                return new ProtocolProbeResult(
+                    definition.Label,
+                    Success: false,
+                    IsSupported: true,
+                    StatusText: "DNS",
+                    Details: BuildCurlFailureDetails(process.ExitCode, standardOutput, standardError),
+                    DurationMs: null);
+            }
+
+            if (IsCertificateFailure(standardOutput, standardError))
             {
                 return new ProtocolProbeResult(
                     definition.Label,
@@ -290,7 +344,7 @@ public sealed class ConnectivityTestService
         }
     }
 
-    private static ProcessStartInfo CreateCurlStartInfo(Uri targetUri, ProtocolProbeDefinition definition)
+    private static ProcessStartInfo CreateCurlStartInfo(Uri targetUri, ProtocolProbeDefinition definition, string? resolvedAddress = null)
     {
         var startInfo = new ProcessStartInfo("curl.exe")
         {
@@ -302,7 +356,7 @@ public sealed class ConnectivityTestService
             StandardErrorEncoding = System.Text.Encoding.UTF8
         };
 
-        foreach (var argument in GetCurlArguments(targetUri, definition))
+        foreach (var argument in GetCurlArguments(targetUri, definition, resolvedAddress))
         {
             startInfo.ArgumentList.Add(argument);
         }
@@ -310,7 +364,7 @@ public sealed class ConnectivityTestService
         return startInfo;
     }
 
-    private static IEnumerable<string> GetCurlArguments(Uri targetUri, ProtocolProbeDefinition definition)
+    private static IEnumerable<string> GetCurlArguments(Uri targetUri, ProtocolProbeDefinition definition, string? resolvedAddress = null)
     {
         yield return "-I";
         yield return "-s";
@@ -325,6 +379,12 @@ public sealed class ConnectivityTestService
         foreach (var argument in definition.CurlArgs)
         {
             yield return argument;
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolvedAddress))
+        {
+            yield return "--resolve";
+            yield return $"{targetUri.Host}:{targetUri.Port}:{resolvedAddress}";
         }
 
         yield return targetUri.AbsoluteUri;
@@ -365,6 +425,299 @@ public sealed class ConnectivityTestService
                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
+    private static bool IsDnsResolutionFailure(string standardOutput, string standardError)
+    {
+        return Regex.IsMatch(
+            $"{standardOutput} {standardError}",
+            "Could not resolve host|No such host is known|Couldn't resolve host|Temporary failure in name resolution|operation refused|DNS.*refused|resolve.*denied|name resolution",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    private static bool IsCertificateFailure(string standardOutput, string standardError)
+    {
+        return Regex.IsMatch(
+            $"{standardOutput} {standardError}",
+            "certificate|SSL certificate problem|self[- ]?signed|certificate verify failed|unable to get local issuer certificate|schannel.*certificate|tlsv1 alert",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    private static async Task<ProtocolProbeResult?> TryProbeViaDohAsync(
+        Uri targetUri,
+        ProtocolProbeDefinition definition,
+        string? dohTemplate,
+        ConcurrentDictionary<string, Lazy<Task<DohResolutionResult>>> dohResolutionCache,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(dohTemplate) || !Uri.TryCreate(dohTemplate, UriKind.Absolute, out var dohUri))
+        {
+            return null;
+        }
+
+        var resolution = await ResolveHostViaDohAsync(targetUri.Host, dohUri, dohResolutionCache, cancellationToken);
+        if (string.IsNullOrWhiteSpace(resolution.Address))
+        {
+            return null;
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(ProbeTimeout);
+
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            using var process = new Process
+            {
+                StartInfo = CreateCurlStartInfo(targetUri, definition, resolution.Address)
+            };
+            process.Start();
+            var standardOutputTask = process.StandardOutput.ReadToEndAsync(timeoutCts.Token);
+            var standardErrorTask = process.StandardError.ReadToEndAsync(timeoutCts.Token);
+            await process.WaitForExitAsync(timeoutCts.Token);
+            stopwatch.Stop();
+
+            var standardOutput = (await standardOutputTask).Trim();
+            var standardError = (await standardErrorTask).Trim();
+            var unsupported = IsUnsupportedProtocol(process.ExitCode, standardOutput, standardError);
+            if (unsupported)
+            {
+                return new ProtocolProbeResult(
+                    definition.Label,
+                    Success: false,
+                    IsSupported: false,
+                    StatusText: "UNSUP",
+                    Details: BuildCurlFailureDetails(process.ExitCode, standardOutput, standardError),
+                    DurationMs: null);
+            }
+
+            if (IsCertificateFailure(standardOutput, standardError))
+            {
+                return new ProtocolProbeResult(
+                    definition.Label,
+                    Success: false,
+                    IsSupported: true,
+                    StatusText: "SSL",
+                    Details: BuildCurlFailureDetails(process.ExitCode, standardOutput, standardError),
+                    DurationMs: null);
+            }
+
+            var success = TryParseCurlProbeOutput(standardOutput, process.ExitCode, out var httpCode);
+            return new ProtocolProbeResult(
+                definition.Label,
+                Success: success,
+                IsSupported: true,
+                StatusText: "DNS",
+                Details: success
+                    ? $"Системный DNS не прошёл, но цель подтверждена через DoH fallback ({resolution.Address}), HTTP {httpCode}"
+                    : $"DoH fallback ({resolution.Address}) не помог: {BuildCurlFailureDetails(process.ExitCode, standardOutput, standardError)}",
+                DurationMs: success ? stopwatch.ElapsedMilliseconds : null,
+                UsedDnsFallback: success);
+        }
+        catch (Exception ex)
+        {
+            return new ProtocolProbeResult(
+                definition.Label,
+                Success: false,
+                IsSupported: true,
+                StatusText: "DNS",
+                Details: $"DoH fallback не сработал: {ex.Message}",
+                DurationMs: null);
+        }
+    }
+
+    private static Task<DohResolutionResult> ResolveHostViaDohAsync(
+        string host,
+        Uri dohUri,
+        ConcurrentDictionary<string, Lazy<Task<DohResolutionResult>>> dohResolutionCache,
+        CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{dohUri}|{host}";
+        var lazyTask = dohResolutionCache.GetOrAdd(
+            cacheKey,
+            _ => new Lazy<Task<DohResolutionResult>>(
+                () => ResolveHostViaDohCoreAsync(host, dohUri, cancellationToken),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+
+        return lazyTask.Value;
+    }
+
+    private static async Task<DohResolutionResult> ResolveHostViaDohCoreAsync(string host, Uri dohUri, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var ipv4 = await QueryDohAddressAsync(host, dohUri, type: 1, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(ipv4))
+            {
+                return new DohResolutionResult(ipv4, null);
+            }
+
+            var ipv6 = await QueryDohAddressAsync(host, dohUri, type: 28, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(ipv6))
+            {
+                return new DohResolutionResult(ipv6, null);
+            }
+
+            return new DohResolutionResult(null, "DoH не вернул ни одного IP-адреса.");
+        }
+        catch (Exception ex)
+        {
+            return new DohResolutionResult(null, ex.Message);
+        }
+    }
+
+    private static async Task<string?> QueryDohAddressAsync(string host, Uri dohUri, ushort type, CancellationToken cancellationToken)
+    {
+        var requestUri = BuildDohRequestUri(dohUri, BuildDnsQuery(host, type));
+        using var request = new HttpRequestMessage(HttpMethod.Get, requestUri);
+        request.Headers.TryAddWithoutValidation("accept", "application/dns-message");
+
+        using var response = await DnsHttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        var payload = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        return TryExtractDnsAddress(payload, type);
+    }
+
+    private static Uri BuildDohRequestUri(Uri dohUri, byte[] dnsQuery)
+    {
+        var separator = string.IsNullOrEmpty(dohUri.Query) ? "?" : "&";
+        var encoded = Convert.ToBase64String(dnsQuery)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+        return new Uri($"{dohUri}{separator}dns={encoded}");
+    }
+
+    private static byte[] BuildDnsQuery(string host, ushort type)
+    {
+        using var stream = new MemoryStream();
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x01);
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x01);
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x00);
+
+        foreach (var label in host.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var labelBytes = System.Text.Encoding.ASCII.GetBytes(label);
+            stream.WriteByte((byte)labelBytes.Length);
+            stream.Write(labelBytes, 0, labelBytes.Length);
+        }
+
+        stream.WriteByte(0x00);
+        stream.WriteByte((byte)(type >> 8));
+        stream.WriteByte((byte)(type & 0xff));
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x01);
+        return stream.ToArray();
+    }
+
+    private static string? TryExtractDnsAddress(byte[] payload, ushort expectedType)
+    {
+        if (payload.Length < 12)
+        {
+            return null;
+        }
+
+        var questionCount = ReadUInt16(payload, 4);
+        var answerCount = ReadUInt16(payload, 6);
+        var offset = 12;
+
+        for (var index = 0; index < questionCount; index++)
+        {
+            if (!TrySkipDnsName(payload, offset, out offset) || offset + 4 > payload.Length)
+            {
+                return null;
+            }
+
+            offset += 4;
+        }
+
+        for (var index = 0; index < answerCount; index++)
+        {
+            if (!TrySkipDnsName(payload, offset, out offset) || offset + 10 > payload.Length)
+            {
+                return null;
+            }
+
+            var answerType = ReadUInt16(payload, offset);
+            offset += 2;
+            offset += 2;
+            offset += 4;
+            var rdLength = ReadUInt16(payload, offset);
+            offset += 2;
+
+            if (offset + rdLength > payload.Length)
+            {
+                return null;
+            }
+
+            if (answerType == expectedType)
+            {
+                if (answerType == 1 && rdLength == 4)
+                {
+                    return new IPAddress(payload[offset..(offset + 4)]).ToString();
+                }
+
+                if (answerType == 28 && rdLength == 16)
+                {
+                    return new IPAddress(payload[offset..(offset + 16)]).ToString();
+                }
+            }
+
+            offset += rdLength;
+        }
+
+        return null;
+    }
+
+    private static bool TrySkipDnsName(byte[] payload, int offset, out int nextOffset)
+    {
+        nextOffset = offset;
+        var jumps = 0;
+
+        while (nextOffset < payload.Length)
+        {
+            var length = payload[nextOffset];
+            if (length == 0)
+            {
+                nextOffset++;
+                return true;
+            }
+
+            if ((length & 0xC0) == 0xC0)
+            {
+                if (nextOffset + 1 >= payload.Length)
+                {
+                    return false;
+                }
+
+                nextOffset += 2;
+                return true;
+            }
+
+            nextOffset += length + 1;
+            jumps++;
+            if (jumps > 128)
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static ushort ReadUInt16(byte[] payload, int offset)
+    {
+        return (ushort)((payload[offset] << 8) | payload[offset + 1]);
+    }
+
     private static string BuildCurlFailureDetails(int exitCode, string standardOutput, string standardError)
     {
         if (!string.IsNullOrWhiteSpace(standardError))
@@ -398,6 +751,31 @@ public sealed class ConnectivityTestService
             return samples.Count == 0
                 ? null
                 : (long)Math.Round(samples.Average());
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static async Task<long?> ProbePingAddressAsync(string address)
+    {
+        try
+        {
+            using var ping = new Ping();
+            var samples = new List<long>(3);
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                var reply = await ping.SendPingAsync(address, 700);
+                if (reply.Status == IPStatus.Success)
+                {
+                    samples.Add(reply.RoundtripTime);
+                }
+            }
+
+            return samples.Count == 0
+                ? null
+                : NormalizeDisplayedPing((long)Math.Round(samples.Average()));
         }
         catch
         {
@@ -864,6 +1242,16 @@ public sealed class ConnectivityTestService
 
     private static string BuildPrimaryProtocolDetails(string targetName, ProbeOutcomeKind outcome, IReadOnlyList<ProtocolProbeResult> protocolResults)
     {
+        var dnsFallbackLabels = protocolResults
+            .Where(result => result.UsedDnsFallback)
+            .Select(result => result.Label)
+            .ToArray();
+
+        if (dnsFallbackLabels.Length > 0 && outcome == ProbeOutcomeKind.Partial)
+        {
+            return $"{ToFriendlyTargetName(targetName)}: доступ подтверждён только через DNS fallback ({string.Join(", ", dnsFallbackLabels)}).";
+        }
+
         if (outcome == ProbeOutcomeKind.Success)
         {
             return string.Empty;

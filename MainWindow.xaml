@@ -1,6 +1,7 @@
 <Window x:Class="ZapretManager.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:ZapretManager.Controls"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:models="clr-namespace:ZapretManager.Models"
@@ -59,15 +60,27 @@
         <SolidColorBrush x:Key="ScrollTrackBrush" Color="#102235" po:Freeze="False" />
         <SolidColorBrush x:Key="ScrollThumbBrush" Color="#4A6A86" po:Freeze="False" />
         <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#5B7C98" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgeSuccessBackgroundBrush" Color="#27423D" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgeSuccessBorderBrush" Color="#6C9184" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgeSuccessForegroundBrush" Color="#7FE0B4" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgePartialBackgroundBrush" Color="#4A422E" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgePartialBorderBrush" Color="#A89566" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgePartialForegroundBrush" Color="#E3C168" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgeFailureBackgroundBrush" Color="#4F3537" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgeFailureBorderBrush" Color="#B88484" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgeFailureForegroundBrush" Color="#E6B3B1" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgeNeutralBackgroundBrush" Color="#0C1A28" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgeNeutralBorderBrush" Color="#274A6B" po:Freeze="False" />
+        <SolidColorBrush x:Key="ProbeBadgeNeutralForegroundBrush" Color="#9AB2CD" po:Freeze="False" />
         <SolidColorBrush x:Key="SummarySuccessBadgeBrush" Color="#27423D" po:Freeze="False" />
         <SolidColorBrush x:Key="SummarySuccessBadgeBorderBrush" Color="#6C9184" po:Freeze="False" />
-        <SolidColorBrush x:Key="SummarySuccessBadgeIconBrush" Color="#FFFFFF" po:Freeze="False" />
+        <SolidColorBrush x:Key="SummarySuccessBadgeIconBrush" Color="#7FE0B4" po:Freeze="False" />
         <SolidColorBrush x:Key="SummaryPartialBadgeBrush" Color="#4A422E" po:Freeze="False" />
         <SolidColorBrush x:Key="SummaryPartialBadgeBorderBrush" Color="#A89566" po:Freeze="False" />
-        <SolidColorBrush x:Key="SummaryPartialBadgeIconBrush" Color="#FFFFFF" po:Freeze="False" />
-        <SolidColorBrush x:Key="SummaryFailureBadgeBrush" Color="#4C3941" po:Freeze="False" />
-        <SolidColorBrush x:Key="SummaryFailureBadgeBorderBrush" Color="#B28A97" po:Freeze="False" />
-        <SolidColorBrush x:Key="SummaryFailureBadgeIconBrush" Color="#FFFFFF" po:Freeze="False" />
+        <SolidColorBrush x:Key="SummaryPartialBadgeIconBrush" Color="#E3C168" po:Freeze="False" />
+        <SolidColorBrush x:Key="SummaryFailureBadgeBrush" Color="#4F3537" po:Freeze="False" />
+        <SolidColorBrush x:Key="SummaryFailureBadgeBorderBrush" Color="#B88484" po:Freeze="False" />
+        <SolidColorBrush x:Key="SummaryFailureBadgeIconBrush" Color="#E6B3B1" po:Freeze="False" />
         <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#102235" po:Freeze="False" />
         <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#102235" po:Freeze="False" />
         <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#35506A" po:Freeze="False" />
@@ -724,11 +737,15 @@
                     <Setter Property="Foreground" Value="{DynamicResource MainTextBrush}" />
                     <Setter Property="BorderBrush" Value="{DynamicResource SelectionBrush}" />
                 </Trigger>
-                <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <MultiTrigger>
+                    <MultiTrigger.Conditions>
+                        <Condition Property="IsKeyboardFocusWithin" Value="True" />
+                        <Condition Property="IsSelected" Value="True" />
+                    </MultiTrigger.Conditions>
                     <Setter Property="Background" Value="{DynamicResource SelectionBrush}" />
                     <Setter Property="Foreground" Value="{DynamicResource MainTextBrush}" />
                     <Setter Property="BorderBrush" Value="{DynamicResource SelectionBrush}" />
-                </Trigger>
+                </MultiTrigger>
             </Style.Triggers>
         </Style>
     </Window.Resources>
@@ -1187,6 +1204,7 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
                                     <Grid Grid.Column="0">
                                         <TextBox x:Name="ManualTargetTextBox"
@@ -1217,11 +1235,18 @@
                                     </Grid>
                                     <Button Grid.Column="1"
                                             Margin="10,0,0,0"
-                                            MinWidth="132"
+                                            MinWidth="176"
+                                            Content="Проверить выбранный"
+                                            Command="{Binding RunSelectedTestCommand}"
+                                            Style="{StaticResource ActionButtonStyle}"
+                                            ToolTip="Проверить только выбранный в таблице конфиг&#10;по выбранным адресам." />
+                                    <Button Grid.Column="2"
+                                            Margin="8,0,0,0"
+                                            MinWidth="140"
                                             Content="{Binding ProbeButtonText}"
                                             Command="{Binding RunTestsCommand}"
                                             Style="{StaticResource PrimaryButtonStyle}"
-                                        ToolTip="Запустить проверку всех конфигов&#10;по выбранным адресам." />
+                                            ToolTip="Запустить проверку всех видимых конфигов&#10;по выбранным адресам." />
                                 </Grid>
                             </StackPanel>
                         </Border>
@@ -1341,6 +1366,9 @@
                                       x:Name="ConfigGrid"
                                       ItemsSource="{Binding ConfigRows}"
                                       SelectedItem="{Binding SelectedConfigRow}"
+                                      SelectionMode="Extended"
+                                      SelectionUnit="FullRow"
+                                      SelectionChanged="ConfigGrid_SelectionChanged"
                                       CanUserResizeColumns="False"
                                       HeadersVisibility="None"
                                       BorderThickness="1,0,1,1"
@@ -1409,102 +1437,21 @@
                                                 </Grid.ColumnDefinitions>
                                                 <DockPanel LastChildFill="True"
                                                            Margin="0,0,4,0">
-                                                <Border Width="18"
-                                                        Height="18"
-                                                        Margin="0,0,8,0"
-                                                        CornerRadius="4"
-                                                        BorderThickness="1"
-                                                        HorizontalAlignment="Left"
-                                                        VerticalAlignment="Center">
-                                                    <Border.Style>
-                                                        <Style TargetType="Border">
+                                                <controls:ProbeStatusBadge BadgeText="{Binding SummaryBadgeText}"
+                                                                           Margin="0,0,8,0"
+                                                                           HorizontalAlignment="Left"
+                                                                           VerticalAlignment="Center">
+                                                    <controls:ProbeStatusBadge.Style>
+                                                        <Style TargetType="controls:ProbeStatusBadge">
                                                             <Setter Property="Visibility" Value="Visible" />
-                                                            <Setter Property="Background" Value="{DynamicResource SummarySuccessBadgeBrush}" />
-                                                            <Setter Property="BorderBrush" Value="{DynamicResource SummarySuccessBadgeBorderBrush}" />
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding HasProbeResult}" Value="False">
                                                                     <Setter Property="Visibility" Value="Collapsed" />
                                                                 </DataTrigger>
-                                                                <DataTrigger Binding="{Binding Outcome}" Value="{x:Static models:ProbeOutcomeKind.Partial}">
-                                                                    <Setter Property="Background" Value="{DynamicResource SummaryPartialBadgeBrush}" />
-                                                                    <Setter Property="BorderBrush" Value="{DynamicResource SummaryPartialBadgeBorderBrush}" />
-                                                                </DataTrigger>
-                                                                <DataTrigger Binding="{Binding Outcome}" Value="{x:Static models:ProbeOutcomeKind.Failure}">
-                                                                    <Setter Property="Background" Value="{DynamicResource SummaryFailureBadgeBrush}" />
-                                                                    <Setter Property="BorderBrush" Value="{DynamicResource SummaryFailureBadgeBorderBrush}" />
-                                                                </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
-                                                    </Border.Style>
-                                                    <Grid Width="10"
-                                                          Height="10"
-                                                          HorizontalAlignment="Center"
-                                                          VerticalAlignment="Center"
-                                                          SnapsToDevicePixels="True">
-                                                        <Path Data="M 1.2 5.2 L 3.9 7.8 L 8.8 2"
-                                                              Stroke="{DynamicResource SummarySuccessBadgeIconBrush}"
-                                                              StrokeThickness="1.8"
-                                                              StrokeStartLineCap="Round"
-                                                              StrokeEndLineCap="Round"
-                                                              StrokeLineJoin="Round">
-                                                            <Path.Style>
-                                                                <Style TargetType="Path">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding Outcome}" Value="{x:Static models:ProbeOutcomeKind.Success}">
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Path.Style>
-                                                        </Path>
-                                                        <Path Data="M 2 2 L 8 8 M 8 2 L 2 8"
-                                                              Stroke="{DynamicResource SummaryFailureBadgeIconBrush}"
-                                                              StrokeThickness="1.7"
-                                                              StrokeStartLineCap="Round"
-                                                              StrokeEndLineCap="Round">
-                                                            <Path.Style>
-                                                                <Style TargetType="Path">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding Outcome}" Value="{x:Static models:ProbeOutcomeKind.Failure}">
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Path.Style>
-                                                        </Path>
-                                                        <Grid Width="10"
-                                                              Height="10"
-                                                              HorizontalAlignment="Center"
-                                                              VerticalAlignment="Center">
-                                                            <Grid.Style>
-                                                                <Style TargetType="Grid">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding Outcome}" Value="{x:Static models:ProbeOutcomeKind.Partial}">
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Grid.Style>
-                                                            <Rectangle Width="1.8"
-                                                                       Height="5.2"
-                                                                       RadiusX="1"
-                                                                       RadiusY="1"
-                                                                       Fill="{DynamicResource SummaryPartialBadgeIconBrush}"
-                                                                       HorizontalAlignment="Center"
-                                                                       VerticalAlignment="Top"
-                                                                       Margin="0,0.8,0,0" />
-                                                            <Ellipse Width="1.8"
-                                                                     Height="1.8"
-                                                                     Fill="{DynamicResource SummaryPartialBadgeIconBrush}"
-                                                                     HorizontalAlignment="Center"
-                                                                     VerticalAlignment="Bottom"
-                                                                     Margin="0,0,0,0.7" />
-                                                        </Grid>
-                                                    </Grid>
-                                                </Border>
+                                                    </controls:ProbeStatusBadge.Style>
+                                                </controls:ProbeStatusBadge>
                                                 <TextBlock Text="{Binding SummaryBodyText}"
                                                            TextTrimming="CharacterEllipsis"
                                                            VerticalAlignment="Center"

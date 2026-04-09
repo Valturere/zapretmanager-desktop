@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Linq;
 using System.Windows;
 using System.Windows.Input;
 using ZapretManager.Models;
@@ -20,7 +21,7 @@ public partial class HiddenConfigsWindow : Window
     }
 
     public HiddenConfigsAction SelectedAction { get; private set; } = HiddenConfigsAction.None;
-    public string? SelectedFilePath { get; private set; }
+    public IReadOnlyList<string> SelectedFilePaths { get; private set; } = [];
 
     private void Header_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -34,13 +35,20 @@ public partial class HiddenConfigsWindow : Window
 
     private void RestoreSelectedButton_Click(object sender, RoutedEventArgs e)
     {
-        if (HiddenConfigsListBox.SelectedItem is not HiddenConfigItem item)
+        var selectedPaths = HiddenConfigsListBox.SelectedItems
+            .OfType<HiddenConfigItem>()
+            .Select(item => item.FilePath)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (selectedPaths.Length == 0)
         {
             return;
         }
 
         SelectedAction = HiddenConfigsAction.RestoreSelected;
-        SelectedFilePath = item.FilePath;
+        SelectedFilePaths = selectedPaths;
         Close();
     }
 
@@ -52,7 +60,7 @@ public partial class HiddenConfigsWindow : Window
 
     private void HiddenConfigsListBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
     {
-        RestoreSelectedButton.IsEnabled = HiddenConfigsListBox.SelectedItem is HiddenConfigItem;
+        RestoreSelectedButton.IsEnabled = HiddenConfigsListBox.SelectedItems.Count > 0;
     }
 
     private void ApplyTheme(bool useLightTheme)

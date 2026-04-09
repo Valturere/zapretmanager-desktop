@@ -183,6 +183,7 @@
             <ListBox x:Name="HiddenConfigsListBox"
                      Grid.Row="2"
                      ItemsSource="{Binding Items}"
+                     SelectionMode="Extended"
                      SelectionChanged="HiddenConfigsListBox_SelectionChanged">
                 <ListBox.ItemTemplate>
                     <DataTemplate>
@@ -202,7 +203,7 @@
                          Margin="0,16,0,0"
                          Columns="3">
                 <Button x:Name="RestoreSelectedButton"
-                        Content="Вернуть выбранный"
+                        Content="Вернуть выбранные"
                         Click="RestoreSelectedButton_Click"
                         Margin="0,0,8,0"
                         Background="{DynamicResource PrimaryBrush}"

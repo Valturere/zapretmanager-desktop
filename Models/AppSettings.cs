@@ -26,4 +26,5 @@ public sealed class AppSettings
     public List<string> SelectedTargetGroupKeys { get; set; } = [];
     public List<string> HiddenConfigPaths { get; set; } = [];
     public bool SkipHideConfigConfirmation { get; set; }
+    public double? ProbeAverageProfileSeconds { get; set; }
 }

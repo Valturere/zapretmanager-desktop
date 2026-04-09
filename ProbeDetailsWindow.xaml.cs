@@ -1,6 +1,5 @@
 using System.Windows;
 using System.Windows.Media;
-using System.Text.RegularExpressions;
 using ZapretManager.Models;
 using ZapretManager.Services;
 using MediaBrush = System.Windows.Media.Brush;
@@ -24,10 +23,6 @@ public partial class ProbeDetailsWindow : Window
         MediaBrush PingBrush,
         string PingToolTip,
         string DetailText,
-        MediaBrush DetailBrush,
-        MediaBrush DetailBadgeBackground,
-        MediaBrush DetailBadgeBorder,
-        MediaBrush DetailBadgeForeground,
         string RowToolTip);
 
     private readonly string _configName;
@@ -68,13 +63,10 @@ public partial class ProbeDetailsWindow : Window
 
     private ProbeDetailRow BuildRow(ConnectivityTargetResult result)
     {
-        var statuses = ParseStatuses(result);
-        var detailText = string.IsNullOrWhiteSpace(result.Details)
-            ? "—"
-            : result.Details;
+        var statuses = ProbeBadgeHelper.ParseProtocolStatuses(result);
         var compactStatusText = result.IsDiagnosticOnly
             ? "—"
-            : BuildCompactStatusText(result);
+            : ProbeBadgeHelper.BuildBadgeText(result);
         var rowToolTip = string.IsNullOrWhiteSpace(result.Details)
             ? result.HttpStatus
             : $"{result.HttpStatus}\n{result.Details}";
@@ -88,52 +80,7 @@ public partial class ProbeDetailsWindow : Window
             PingBrush: GetPingBrush(result),
             PingToolTip: result.PingMilliseconds.HasValue ? $"Средний отклик: {result.PingMilliseconds.Value} мс" : "Отклик не получен",
             DetailText: compactStatusText,
-            DetailBrush: string.Equals(compactStatusText, "—", StringComparison.Ordinal) ? (MediaBrush)FindResource("MutedBrush") : (MediaBrush)FindResource("TextBrush"),
-            DetailBadgeBackground: GetDetailBadgeBackground(result),
-            DetailBadgeBorder: GetDetailBadgeBorder(result),
-            DetailBadgeForeground: GetDetailBadgeForeground(result),
             RowToolTip: rowToolTip);
-    }
-
-    private static Dictionary<string, string> ParseStatuses(ConnectivityTargetResult result)
-    {
-        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (Match match in Regex.Matches(result.HttpStatus, @"(?<label>HTTP|TLS1\.2|TLS1\.3|PING):(?<value>[A-Z0-9\.]+)", RegexOptions.IgnoreCase))
-        {
-            map[match.Groups["label"].Value.ToUpperInvariant()] = match.Groups["value"].Value.ToUpperInvariant();
-        }
-
-        if (map.Count > 0)
-        {
-            return map;
-        }
-
-        if (string.Equals(result.HttpStatus, "TLS OK", StringComparison.OrdinalIgnoreCase))
-        {
-            map["TLS1.2"] = "OK";
-            map["TLS1.3"] = "OK";
-            return map;
-        }
-
-        if (string.Equals(result.HttpStatus, "TCP OK", StringComparison.OrdinalIgnoreCase))
-        {
-            map["HTTP"] = "OK";
-            return map;
-        }
-
-        if (string.Equals(result.HttpStatus, "PING OK", StringComparison.OrdinalIgnoreCase))
-        {
-            map["PING"] = "OK";
-            return map;
-        }
-
-        if (!string.IsNullOrWhiteSpace(result.HttpStatus) && !result.IsDiagnosticOnly)
-        {
-            map["HTTP"] = "ERROR";
-        }
-
-        return map;
     }
 
     private ProtocolCellViewModel BuildProtocolCell(IReadOnlyDictionary<string, string> statuses, string key)
@@ -147,6 +94,7 @@ public partial class ProbeDetailsWindow : Window
         {
             "OK" => new ProtocolCellViewModel("OK", (MediaBrush)FindResource("SuccessTextBrush"), "Проверка пройдена"),
             "UNSUP" => new ProtocolCellViewModel("UNSUP", (MediaBrush)FindResource("PartialTextBrush"), "Протокол недоступен или не поддерживается"),
+            "DNS" => new ProtocolCellViewModel("DNS", (MediaBrush)FindResource("PartialTextBrush"), "Обычный системный DNS не прошёл или потребовался DoH fallback"),
             "SSL" => new ProtocolCellViewModel("SSL", (MediaBrush)FindResource("FailureTextBrush"), "Проверка упёрлась в SSL/TLS"),
             "ERROR" => new ProtocolCellViewModel("ERROR", (MediaBrush)FindResource("FailureTextBrush"), "Проверка не пройдена"),
             _ => new ProtocolCellViewModel(value, (MediaBrush)FindResource("NeutralTextBrush"), value)
@@ -175,61 +123,6 @@ public partial class ProbeDetailsWindow : Window
             : (MediaBrush)FindResource("NeutralTextBrush");
     }
 
-    private static string BuildCompactStatusText(ConnectivityTargetResult result)
-    {
-        return result.Outcome switch
-        {
-            ProbeOutcomeKind.Success => "✓",
-            ProbeOutcomeKind.Partial => "!",
-            _ => "✕"
-        };
-    }
-
-    private MediaBrush GetDetailBadgeBackground(ConnectivityTargetResult result)
-    {
-        if (result.IsDiagnosticOnly)
-        {
-            return (MediaBrush)FindResource("PanelBrush");
-        }
-
-        return result.Outcome switch
-        {
-            ProbeOutcomeKind.Success => (MediaBrush)FindResource("SummarySuccessBrush"),
-            ProbeOutcomeKind.Partial => (MediaBrush)FindResource("SummaryPartialBrush"),
-            _ => (MediaBrush)FindResource("SummaryFailureBrush")
-        };
-    }
-
-    private MediaBrush GetDetailBadgeBorder(ConnectivityTargetResult result)
-    {
-        if (result.IsDiagnosticOnly)
-        {
-            return (MediaBrush)FindResource("PanelBorderBrush");
-        }
-
-        return result.Outcome switch
-        {
-            ProbeOutcomeKind.Success => (MediaBrush)FindResource("SummarySuccessBorderBrush"),
-            ProbeOutcomeKind.Partial => (MediaBrush)FindResource("SummaryPartialBorderBrush"),
-            _ => (MediaBrush)FindResource("SummaryFailureBorderBrush")
-        };
-    }
-
-    private MediaBrush GetDetailBadgeForeground(ConnectivityTargetResult result)
-    {
-        if (result.IsDiagnosticOnly)
-        {
-            return (MediaBrush)FindResource("MutedBrush");
-        }
-
-        return result.Outcome switch
-        {
-            ProbeOutcomeKind.Success => (MediaBrush)FindResource("SummarySuccessIconBrush"),
-            ProbeOutcomeKind.Partial => (MediaBrush)FindResource("SummaryPartialIconBrush"),
-            _ => (MediaBrush)FindResource("SummaryFailureIconBrush")
-        };
-    }
-
     private void ApplyTheme(bool useLightTheme)
     {
         SetBrushColor("WindowBgBrush", useLightTheme ? "#F7FBFF" : "#102235");
@@ -245,17 +138,30 @@ public partial class ProbeDetailsWindow : Window
 
         SetBrushColor("SummarySuccessBrush", useLightTheme ? "#D9EDE3" : "#27423D");
         SetBrushColor("SummarySuccessBorderBrush", useLightTheme ? "#A8C4B7" : "#6C9184");
-        SetBrushColor("SummarySuccessIconBrush", useLightTheme ? "#2E6350" : "#FFFFFF");
+        SetBrushColor("SummarySuccessIconBrush", useLightTheme ? "#2E6350" : "#7FE0B4");
         SetBrushColor("SummaryPartialBrush", useLightTheme ? "#EEE4D3" : "#4A422E");
         SetBrushColor("SummaryPartialBorderBrush", useLightTheme ? "#C7B18A" : "#A89566");
-        SetBrushColor("SummaryPartialIconBrush", useLightTheme ? "#755B2F" : "#FFFFFF");
-        SetBrushColor("SummaryFailureBrush", useLightTheme ? "#EEDDE3" : "#4C3941");
-        SetBrushColor("SummaryFailureBorderBrush", useLightTheme ? "#C8A8B2" : "#B28A97");
-        SetBrushColor("SummaryFailureIconBrush", useLightTheme ? "#764754" : "#FFFFFF");
+        SetBrushColor("SummaryPartialIconBrush", useLightTheme ? "#755B2F" : "#E3C168");
+        SetBrushColor("SummaryFailureBrush", useLightTheme ? "#ECDEDF" : "#4F3537");
+        SetBrushColor("SummaryFailureBorderBrush", useLightTheme ? "#C29A9A" : "#B88484");
+        SetBrushColor("SummaryFailureIconBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
+
+        SetBrushColor("ProbeBadgeSuccessBackgroundBrush", useLightTheme ? "#D9EDE3" : "#27423D");
+        SetBrushColor("ProbeBadgeSuccessBorderBrush", useLightTheme ? "#A8C4B7" : "#6C9184");
+        SetBrushColor("ProbeBadgeSuccessForegroundBrush", useLightTheme ? "#2F8E63" : "#7FE0B4");
+        SetBrushColor("ProbeBadgePartialBackgroundBrush", useLightTheme ? "#EEE4D3" : "#4A422E");
+        SetBrushColor("ProbeBadgePartialBorderBrush", useLightTheme ? "#C7B18A" : "#A89566");
+        SetBrushColor("ProbeBadgePartialForegroundBrush", useLightTheme ? "#9A6E1D" : "#E3C168");
+        SetBrushColor("ProbeBadgeFailureBackgroundBrush", useLightTheme ? "#ECDEDF" : "#4F3537");
+        SetBrushColor("ProbeBadgeFailureBorderBrush", useLightTheme ? "#C29A9A" : "#B88484");
+        SetBrushColor("ProbeBadgeFailureForegroundBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
+        SetBrushColor("ProbeBadgeNeutralBackgroundBrush", useLightTheme ? "#EEF5FB" : "#0C1A28");
+        SetBrushColor("ProbeBadgeNeutralBorderBrush", useLightTheme ? "#9CB7CF" : "#274A6B");
+        SetBrushColor("ProbeBadgeNeutralForegroundBrush", useLightTheme ? "#5E7893" : "#9AB2CD");
 
         SetBrushColor("SuccessTextBrush", useLightTheme ? "#2F8E63" : "#7FE0B4");
         SetBrushColor("PartialTextBrush", useLightTheme ? "#9A6E1D" : "#E3C168");
-        SetBrushColor("FailureTextBrush", useLightTheme ? "#A44C64" : "#E6A6B8");
+        SetBrushColor("FailureTextBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
         SetBrushColor("NeutralTextBrush", useLightTheme ? "#6D849C" : "#9AB2CD");
         SetBrushColor("PingTextBrush", useLightTheme ? "#2C89A1" : "#96D6E8");
         SetBrushColor("ScrollTrackBrush", useLightTheme ? "#E4EEF7" : "#102235");
