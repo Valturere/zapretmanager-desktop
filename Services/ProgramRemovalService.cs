@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Linq;
 using System.Text;
 
 namespace ZapretManager.Services;
@@ -12,6 +13,7 @@ public sealed class ProgramRemovalService
         string currentExecutablePath,
         int currentProcessId,
         string serviceName,
+        IReadOnlyCollection<string>? extraCleanupPaths = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(currentExecutablePath) || !File.Exists(currentExecutablePath))
@@ -34,10 +36,23 @@ public sealed class ProgramRemovalService
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "ZapretManager");
         var scriptPath = Path.Combine(Path.GetTempPath(), $"remove-zapretmanager-{Guid.NewGuid():N}.ps1");
+        var extraCleanupPathsFile = Path.Combine(Path.GetTempPath(), $"remove-zapretmanager-paths-{Guid.NewGuid():N}.txt");
 
         await File.WriteAllTextAsync(
             scriptPath,
             BuildRemovalScriptContent(),
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
+            cancellationToken);
+
+        var normalizedExtraPaths = (extraCleanupPaths ?? [])
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        await File.WriteAllLinesAsync(
+            extraCleanupPathsFile,
+            normalizedExtraPaths,
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: true),
             cancellationToken);
 
@@ -57,7 +72,8 @@ public sealed class ProgramRemovalService
                 $"-ProgramDataDirectory {QuoteArgument(programDataDirectory)} " +
                 $"-ServiceName {QuoteArgument(serviceName)} " +
                 $"-StartupTaskName {QuoteArgument(StartupTaskName)} " +
-                $"-LegacyRunValueName {QuoteArgument(LegacyRunValueName)}",
+                $"-LegacyRunValueName {QuoteArgument(LegacyRunValueName)} " +
+                $"-ExtraCleanupPathsFile {QuoteArgument(extraCleanupPathsFile)}",
             WorkingDirectory = Path.GetTempPath(),
             UseShellExecute = true
         };
@@ -111,7 +127,8 @@ param(
     [string]$ProgramDataDirectory,
     [string]$ServiceName = '',
     [string]$StartupTaskName = '',
-    [string]$LegacyRunValueName = ''
+    [string]$LegacyRunValueName = '',
+    [string]$ExtraCleanupPathsFile = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -214,6 +231,37 @@ function Try-RemoveDirectoryIfEmpty {
     }
 }
 
+function Try-RemoveExtraPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return
+    }
+
+    try {
+        $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    }
+    catch {
+        return
+    }
+
+    if (-not (Test-Path -LiteralPath $resolvedPath)) {
+        return
+    }
+
+    try {
+        $item = Get-Item -LiteralPath $resolvedPath -Force -ErrorAction Stop
+        if ($item.PSIsContainer) {
+            Try-RemovePathWithRetry -Path $resolvedPath
+        }
+        else {
+            Remove-FileWithRetry -Path $resolvedPath
+        }
+    }
+    catch {
+    }
+}
+
 Wait-ForProcessExit -ProcessId $CurrentProcessId
 Start-Sleep -Milliseconds 350
 
@@ -272,6 +320,18 @@ Remove-FileWithRetry -Path $TargetExecutablePath
 Remove-FileWithRetry -Path ($TargetExecutablePath + '.old')
 Remove-FileWithRetry -Path ($TargetExecutablePath + '.bak')
 Try-RemoveDirectoryIfEmpty -Path $TargetDirectory
+if (-not [string]::IsNullOrWhiteSpace($ExtraCleanupPathsFile) -and (Test-Path -LiteralPath $ExtraCleanupPathsFile)) {
+    try {
+        $extraPaths = Get-Content -LiteralPath $ExtraCleanupPathsFile -ErrorAction Stop
+        foreach ($extraPath in $extraPaths) {
+            Try-RemoveExtraPath -Path $extraPath
+        }
+    }
+    catch {
+    }
+
+    Invoke-Safe { Remove-Item -LiteralPath $ExtraCleanupPathsFile -Force -ErrorAction SilentlyContinue }
+}
 Try-RemovePathWithRetry -Path $ProgramDataDirectory
 Try-RemovePathWithRetry -Path $LocalDataDirectory
 

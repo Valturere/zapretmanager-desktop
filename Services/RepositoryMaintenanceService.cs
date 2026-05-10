@@ -74,8 +74,8 @@ public sealed class RepositoryMaintenanceService
             : string.Empty;
 
         var existingLines = SplitLines(NormalizeLineEndings(existingText));
-        var cleanedLines = RemoveManagedHostsBlock(existingLines);
-        var (filteredLines, removedEntries) = RemoveOldZapretHostEntries(cleanedLines, hostnames);
+        var cleanedLines = RemoveManagedHostsBlock(existingLines, HostsBlockStart, HostsBlockEnd);
+        var (filteredLines, removedEntries) = RemoveHostEntries(cleanedLines, hostnames);
 
         while (filteredLines.Count > 0 && string.IsNullOrWhiteSpace(filteredLines[^1]))
         {
@@ -151,7 +151,7 @@ public sealed class RepositoryMaintenanceService
             }
         }
 
-        var cleanedLines = RemoveManagedHostsBlock(existingLines);
+        var cleanedLines = RemoveManagedHostsBlock(existingLines, HostsBlockStart, HostsBlockEnd);
         while (cleanedLines.Count > 0 && string.IsNullOrWhiteSpace(cleanedLines[^1]))
         {
             cleanedLines.RemoveAt(cleanedLines.Count - 1);
@@ -244,8 +244,113 @@ public sealed class RepositoryMaintenanceService
         }
         catch (Exception ex) when (NetworkErrorTranslator.IsNetworkException(ex))
         {
+            var curlResult = await TryDownloadTextWithCurlAsync(url, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(curlResult))
+            {
+                return curlResult;
+            }
+
             throw NetworkErrorTranslator.CreateGitHubException(ex, action);
         }
+    }
+
+    private static async Task<string?> TryDownloadTextWithCurlAsync(string url, CancellationToken cancellationToken)
+    {
+        if (!await HasCurlAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var argumentVariants = new[]
+        {
+            new[] { "-sS", "-L", "--ssl-revoke-best-effort", url },
+            new[] { "-sS", "-L", "--ssl-no-revoke", url },
+            new[] { "-sS", "-L", url }
+        };
+
+        foreach (var arguments in argumentVariants)
+        {
+            try
+            {
+                using var process = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "curl.exe",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        StandardOutputEncoding = Encoding.UTF8,
+                        StandardErrorEncoding = Encoding.UTF8,
+                        CreateNoWindow = true
+                    }
+                };
+
+                foreach (var argument in arguments)
+                {
+                    process.StartInfo.ArgumentList.Add(argument);
+                }
+
+                process.Start();
+                var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+                var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+                await process.WaitForExitAsync(cancellationToken);
+
+                var stdout = (await stdoutTask).Trim();
+                var stderr = (await stderrTask).Trim();
+                if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(stdout))
+                {
+                    return stdout;
+                }
+
+                if (!LooksLikeUnsupportedCurlOption(stderr))
+                {
+                    continue;
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> HasCurlAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "curl.exe",
+                    Arguments = "--version",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            await process.WaitForExitAsync(cancellationToken);
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool LooksLikeUnsupportedCurlOption(string stderr)
+    {
+        return !string.IsNullOrWhiteSpace(stderr) &&
+               (stderr.Contains("unknown option", StringComparison.OrdinalIgnoreCase) ||
+                stderr.Contains("unrecognized option", StringComparison.OrdinalIgnoreCase) ||
+                stderr.Contains("option", StringComparison.OrdinalIgnoreCase) &&
+                stderr.Contains("not supported", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string NormalizeRemoteText(string text)
@@ -297,14 +402,14 @@ public sealed class RepositoryMaintenanceService
         return hostnames;
     }
 
-    private static List<string> RemoveManagedHostsBlock(List<string> lines)
+    private static List<string> RemoveManagedHostsBlock(List<string> lines, string blockStart, string blockEnd)
     {
         var result = new List<string>();
         var insideManagedBlock = false;
 
         foreach (var line in lines)
         {
-            if (string.Equals(line.Trim(), HostsBlockStart, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(line.Trim(), blockStart, StringComparison.OrdinalIgnoreCase))
             {
                 insideManagedBlock = true;
                 continue;
@@ -312,7 +417,7 @@ public sealed class RepositoryMaintenanceService
 
             if (insideManagedBlock)
             {
-                if (string.Equals(line.Trim(), HostsBlockEnd, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(line.Trim(), blockEnd, StringComparison.OrdinalIgnoreCase))
                 {
                     insideManagedBlock = false;
                 }
@@ -326,7 +431,7 @@ public sealed class RepositoryMaintenanceService
         return result;
     }
 
-    private static (List<string> Lines, int RemovedEntries) RemoveOldZapretHostEntries(
+    private static (List<string> Lines, int RemovedEntries) RemoveHostEntries(
         IEnumerable<string> lines,
         HashSet<string> targetHostnames)
     {

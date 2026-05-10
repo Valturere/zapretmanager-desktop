@@ -91,6 +91,7 @@ $taskName = '{{taskName}}'
 $userId = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $action = New-ScheduledTaskAction -Execute '{{escapedExecutablePath}}' -Argument '{{escapedArguments}}' -WorkingDirectory '{{escapedWorkingDirectory}}'
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $userId
+$trigger.Delay = 'PT15S'
 $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances Ignore
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description '{{escapedDescription}}' -Force | Out-Null

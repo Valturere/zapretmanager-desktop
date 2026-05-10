@@ -50,15 +50,15 @@ public partial class AboutWindow : Window
 
     private void ApplyTheme(bool useLightTheme)
     {
-        SetBrushColor("WindowBgBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("WindowBorderBrush", useLightTheme ? "#9AB7D3" : "#295276");
-        SetBrushColor("TextBrush", useLightTheme ? "#183049" : "#FFFFFF");
-        SetBrushColor("MutedBrush", useLightTheme ? "#5E7893" : "#9AB2CD");
-        SetBrushColor("PanelBrush", useLightTheme ? "#EEF5FB" : "#0C1A28");
-        SetBrushColor("PanelBorderBrush", useLightTheme ? "#9CB7CF" : "#274A6B");
-        SetBrushColor("ActionBrush", useLightTheme ? "#DCE9F5" : "#173454");
-        SetBrushColor("ActionBorderBrush", useLightTheme ? "#87A8C8" : "#31597F");
-        SetBrushColor("LinkBrush", useLightTheme ? "#2C89A1" : "#7BC8FF");
+        SetBrushColor("WindowBgBrush", useLightTheme ? "#FAFCFF" : "#0E1828");
+        SetBrushColor("WindowBorderBrush", useLightTheme ? "#DCE7F2" : "#22344E");
+        SetBrushColor("TextBrush", useLightTheme ? "#0E1B2B" : "#F4F8FF");
+        SetBrushColor("MutedBrush", useLightTheme ? "#637693" : "#90A3BF");
+        SetBrushColor("PanelBrush", useLightTheme ? "#FBFDFF" : "#0A1523");
+        SetBrushColor("PanelBorderBrush", useLightTheme ? "#E4EDF7" : "#1D3048");
+        SetBrushColor("ActionBrush", useLightTheme ? "#F6F9FD" : "#111C2D");
+        SetBrushColor("ActionBorderBrush", useLightTheme ? "#D8E2EF" : "#263952");
+        SetBrushColor("LinkBrush", useLightTheme ? "#2B70F7" : "#6E9CFF");
     }
 
     private void SetBrushColor(string key, string color)

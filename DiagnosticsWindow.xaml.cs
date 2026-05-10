@@ -138,25 +138,25 @@ public partial class DiagnosticsWindow : Window
     private void ApplyTheme(bool useLightTheme)
     {
         _useLightTheme = useLightTheme;
-        var primaryBorderColor = useLightTheme ? "#7CB392" : "#7BE2B2";
-        SetBrushColor("WindowBgBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("WindowBorderBrush", useLightTheme ? "#9AB7D3" : "#295276");
-        SetBrushColor("TextBrush", useLightTheme ? "#183049" : "#FFFFFF");
-        SetBrushColor("MutedBrush", useLightTheme ? "#4F6B88" : "#9AB2CD");
-        SetBrushColor("PanelBrush", useLightTheme ? "#EEF5FB" : "#0C1A28");
-        SetBrushColor("PanelBorderBrush", useLightTheme ? "#9CB7CF" : "#274A6B");
-        SetBrushColor("ActionBrush", useLightTheme ? "#DCE9F5" : "#173454");
-        SetBrushColor("ActionBorderBrush", useLightTheme ? "#87A8C8" : "#31597F");
-        SetBrushColor("PrimaryBrush", useLightTheme ? "#4FD593" : "#47C78B");
+        var primaryBorderColor = useLightTheme ? "#5C90FF" : "#6E9CFF";
+        SetBrushColor("WindowBgBrush", useLightTheme ? "#FAFCFF" : "#0E1828");
+        SetBrushColor("WindowBorderBrush", useLightTheme ? "#DCE7F2" : "#22344E");
+        SetBrushColor("TextBrush", useLightTheme ? "#0E1B2B" : "#F4F8FF");
+        SetBrushColor("MutedBrush", useLightTheme ? "#637693" : "#90A3BF");
+        SetBrushColor("PanelBrush", useLightTheme ? "#FBFDFF" : "#0A1523");
+        SetBrushColor("PanelBorderBrush", useLightTheme ? "#E4EDF7" : "#1D3048");
+        SetBrushColor("ActionBrush", useLightTheme ? "#F6F9FD" : "#111C2D");
+        SetBrushColor("ActionBorderBrush", useLightTheme ? "#D8E2EF" : "#263952");
+        SetBrushColor("PrimaryBrush", useLightTheme ? "#2B70F7" : "#2F6BFF");
         SetBrushColor("PrimaryBorderBrush", primaryBorderColor);
-        SetBrushColor("PrimaryTextBrush", "#0A2416");
-        SetBrushColor("GridRowBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("GridAltRowBrush", useLightTheme ? "#EEF5FB" : "#0D1C2C");
-        SetBrushColor("ScrollTrackBrush", useLightTheme ? "#E4EEF7" : "#102235");
-        SetBrushColor("ScrollThumbBrush", useLightTheme ? "#8EA9C2" : "#4A6A86");
-        SetBrushColor("ScrollThumbHoverBrush", useLightTheme ? "#7897B5" : "#5B7C98");
-        SetBrushColor("ProgressTrackBrush", useLightTheme ? "#D6E4F1" : "#18324C");
-        SetBrushColor("ProgressFillBrush", useLightTheme ? "#4FD593" : "#47C78B");
+        SetBrushColor("PrimaryTextBrush", "#F7FBFF");
+        SetBrushColor("GridRowBrush", useLightTheme ? "#FFFFFF" : "#0E1828");
+        SetBrushColor("GridAltRowBrush", useLightTheme ? "#F8FBFF" : "#0B1322");
+        SetBrushColor("ScrollTrackBrush", useLightTheme ? "#EEF3F8" : "#101A2A");
+        SetBrushColor("ScrollThumbBrush", useLightTheme ? "#B1C0D2" : "#3D526D");
+        SetBrushColor("ScrollThumbHoverBrush", useLightTheme ? "#94A8C0" : "#587392");
+        SetBrushColor("ProgressTrackBrush", useLightTheme ? "#D9E5F4" : "#16263B");
+        SetBrushColor("ProgressFillBrush", useLightTheme ? "#2B70F7" : "#2F6BFF");
 
         if (_lastReport is not null)
         {

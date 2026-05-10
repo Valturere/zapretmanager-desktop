@@ -50,20 +50,20 @@ public partial class DeleteZapretChoiceWindow : Window
 
     private void ApplyTheme(bool useLightTheme)
     {
-        SetBrushColor("WindowBgBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("WindowBorderBrush", useLightTheme ? "#9AB7D3" : "#295276");
-        SetBrushColor("TitleBrush", useLightTheme ? "#183049" : "#FFFFFF");
-        SetBrushColor("TextBrush", useLightTheme ? "#4F6B88" : "#D5E4F5");
-        SetBrushColor("MutedBrush", useLightTheme ? "#68839E" : "#89A6C2");
-        SetBrushColor("PanelBrush", useLightTheme ? "#EEF5FB" : "#0C1A28");
-        SetBrushColor("PanelBorderBrush", useLightTheme ? "#BED1E4" : "#274A6B");
-        SetBrushColor("PrimaryBrush", useLightTheme ? "#4FD593" : "#47C78B");
-        SetBrushColor("PrimaryBorderBrush", useLightTheme ? "#7CB392" : "#7BE2B2");
-        SetBrushColor("PrimaryTextBrush", "#0A2416");
-        SetBrushColor("ActionBrush", useLightTheme ? "#DCE9F5" : "#173454");
-        SetBrushColor("ActionBorderBrush", useLightTheme ? "#87A8C8" : "#31597F");
-        SetBrushColor("DangerBrush", useLightTheme ? "#D56B6B" : "#C55B5B");
-        SetBrushColor("DangerBorderBrush", useLightTheme ? "#E38F8F" : "#E17C7C");
+        SetBrushColor("WindowBgBrush", useLightTheme ? "#FAFCFF" : "#0E1828");
+        SetBrushColor("WindowBorderBrush", useLightTheme ? "#DCE7F2" : "#22344E");
+        SetBrushColor("TitleBrush", useLightTheme ? "#0E1B2B" : "#F4F8FF");
+        SetBrushColor("TextBrush", useLightTheme ? "#22364D" : "#D6E3F5");
+        SetBrushColor("MutedBrush", useLightTheme ? "#637693" : "#90A3BF");
+        SetBrushColor("PanelBrush", useLightTheme ? "#FBFDFF" : "#0A1523");
+        SetBrushColor("PanelBorderBrush", useLightTheme ? "#E4EDF7" : "#1D3048");
+        SetBrushColor("PrimaryBrush", useLightTheme ? "#2B70F7" : "#2F6BFF");
+        SetBrushColor("PrimaryBorderBrush", useLightTheme ? "#5C90FF" : "#6E9CFF");
+        SetBrushColor("PrimaryTextBrush", "#F7FBFF");
+        SetBrushColor("ActionBrush", useLightTheme ? "#F6F9FD" : "#111C2D");
+        SetBrushColor("ActionBorderBrush", useLightTheme ? "#D8E2EF" : "#263952");
+        SetBrushColor("DangerBrush", useLightTheme ? "#D55454" : "#A94141");
+        SetBrushColor("DangerBorderBrush", useLightTheme ? "#E48787" : "#DB7777");
     }
 
     private void SetBrushColor(string resourceKey, string hexColor)

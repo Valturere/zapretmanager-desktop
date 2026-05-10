@@ -6,10 +6,32 @@ namespace ZapretManager.Services;
 
 internal static class NetworkErrorTranslator
 {
+    private static readonly string GitHubRoutingHintText =
+        "Проблема может быть связана с текущей фильтрацией или маршрутизацией трафика. Иногда помогает сервис смены местоположения, VPN или другое аналогичное решение.";
+
     public static bool IsNetworkException(Exception exception)
     {
         return EnumerateExceptions(exception).Any(item =>
             item is HttpRequestException or TaskCanceledException or TimeoutException or SocketException or AuthenticationException);
+    }
+
+    public static string AppendGitHubRoutingHint(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message) ||
+            message.Contains(GitHubRoutingHintText, StringComparison.OrdinalIgnoreCase))
+        {
+            return message;
+        }
+
+        return message +
+               $"{Environment.NewLine}{Environment.NewLine}" +
+               GitHubRoutingHintText;
+    }
+
+    public static bool ContainsGitHubRoutingHint(string? message)
+    {
+        return !string.IsNullOrWhiteSpace(message) &&
+               message.Contains(GitHubRoutingHintText, StringComparison.OrdinalIgnoreCase);
     }
 
     public static InvalidOperationException CreateGitHubException(Exception exception, string action)
@@ -25,33 +47,40 @@ internal static class NetworkErrorTranslator
         if (timeoutDetected)
         {
             return new InvalidOperationException(
-                $"{action}: GitHub не ответил вовремя. Попробуйте ещё раз чуть позже.",
+                AppendGitHubRoutingHint($"{action}: GitHub не ответил вовремя. Попробуйте ещё раз чуть позже."),
                 exception);
         }
 
         if (sslDetected)
         {
             return new InvalidOperationException(
-                $"{action}: не удалось установить защищённое HTTPS-соединение с GitHub. Проверьте системное время, DNS, прокси или антивирус и повторите попытку.",
+                AppendGitHubRoutingHint($"{action}: не удалось установить защищённое HTTPS-соединение с GitHub. Проверьте системное время, DNS, прокси или антивирус и повторите попытку."),
                 exception);
         }
 
         if (dnsDetected)
         {
             return new InvalidOperationException(
-                $"{action}: не удалось подключиться к GitHub. Проверьте интернет и DNS, затем попробуйте ещё раз.",
+                AppendGitHubRoutingHint($"{action}: не удалось подключиться к GitHub. Проверьте интернет и DNS, затем попробуйте ещё раз."),
                 exception);
         }
 
         if (httpException?.StatusCode is not null)
         {
+            if ((int)httpException.StatusCode == 403)
+            {
+                return new InvalidOperationException(
+                    AppendGitHubRoutingHint($"{action}: GitHub временно ограничил запрос. Попробуйте ещё раз чуть позже."),
+                    exception);
+            }
+
             return new InvalidOperationException(
-                $"{action}: GitHub вернул ошибку HTTP {(int)httpException.StatusCode}. Попробуйте повторить позже.",
+                AppendGitHubRoutingHint($"{action}: GitHub вернул ошибку HTTP {(int)httpException.StatusCode}. Попробуйте повторить позже."),
                 exception);
         }
 
         return new InvalidOperationException(
-            $"{action}: не удалось получить данные из GitHub. Проверьте интернет, DNS и доступ к github.com.",
+            AppendGitHubRoutingHint($"{action}: не удалось получить данные из GitHub. Проверьте интернет, DNS и доступ к github.com."),
             exception);
     }
 

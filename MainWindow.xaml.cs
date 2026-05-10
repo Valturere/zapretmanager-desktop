@@ -18,6 +18,8 @@ using ZapretManager.Models;
 using ZapretManager.Services;
 using ZapretManager.ViewModels;
 using System.Windows.Shell;
+using System.Collections.ObjectModel;
+using System.Text.RegularExpressions;
 
 namespace ZapretManager;
 
@@ -42,8 +44,21 @@ public partial class MainWindow : Window
     private string? _lastTrayBalloonText;
     private DateTime _lastTrayBalloonShownUtc = DateTime.MinValue;
     private ListSortDirection _configSortDirection = ListSortDirection.Ascending;
+    private readonly ObservableCollection<TcpFreezeConfigTableRow> _tcpRows = [];
+    private readonly Dictionary<string, TcpFreezeConfigResult> _tcpResultMap = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Regex TcpSuiteCountRegex = new(@"suite TCP 16-20:\s+(?<count>\d+)\s+целей", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex TcpConfigHeaderRegex = new(@"^===\s+(?<name>.+)\s+===$", RegexOptions.Compiled);
+    private static readonly Regex TcpTargetLineRegex = new(@"\[(?<id>[^\]]+)\]\s+(?<host>\S+)\s+->\s+(?<details>.+)$", RegexOptions.Compiled);
+    private CancellationTokenSource? _tcpRunCancellation;
+    private TcpFreezeDetailsWindow? _embeddedTcpDetailsWindow;
     private HwndSource? _hwndSource;
     private DateTime _toolTipSuppressedUntilUtc = DateTime.MinValue;
+    private bool _autoApplySelectorsReady;
+    private int _tcpRunTotalTargets;
+    private int _tcpRunProcessedTargets;
+    private int _tcpRunStartedConfigs;
+    private int _tcpRunTotalConfigs;
+    private string? _tcpRunCurrentConfigName;
 
     public MainWindow(bool startHidden = false, bool useLightTheme = false)
     {
@@ -65,10 +80,66 @@ public partial class MainWindow : Window
             Visible = true
         };
         _notifyIcon.MouseUp += NotifyIcon_MouseUp;
+        _notifyIcon.BalloonTipClicked += NotifyIcon_BalloonTipClicked;
         DataContextChanged += MainWindow_DataContextChanged;
 
         AddHandler(ToolTipOpeningEvent, new ToolTipEventHandler(AnyToolTip_Opening));
         AddHandler(ToolTipClosingEvent, new ToolTipEventHandler(AnyToolTip_Closing));
+    }
+
+    private void WindowRootGrid_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject source)
+        {
+            return;
+        }
+
+        var focusableAncestor = FindFocusableAncestor(source);
+        if (focusableAncestor is not null && !ReferenceEquals(focusableAncestor, WindowRootGrid))
+        {
+            return;
+        }
+
+        Keyboard.Focus(WindowRootGrid);
+    }
+
+    private void ManualTargetTextBox_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(viewModel.ManualTarget))
+        {
+            viewModel.ManualTarget = string.Empty;
+        }
+    }
+
+    private static UIElement? FindFocusableAncestor(DependencyObject? source)
+    {
+        var current = source;
+        while (current is not null)
+        {
+            if (current is UIElement element && element.Focusable)
+            {
+                return element;
+            }
+
+            current = GetParentObject(current);
+        }
+
+        return null;
+    }
+
+    private static DependencyObject? GetParentObject(DependencyObject current)
+    {
+        if (current is Visual || current is System.Windows.Media.Media3D.Visual3D)
+        {
+            return VisualTreeHelper.GetParent(current);
+        }
+
+        return LogicalTreeHelper.GetParent(current);
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
@@ -80,10 +151,47 @@ public partial class MainWindow : Window
 
         if (DataContext is MainViewModel viewModel)
         {
-            await viewModel.InitializeAsync();
+            await viewModel.InitializeAsync(_startHidden);
             await viewModel.RefreshStatusAsync();
             ApplyTheme(viewModel.UseLightThemeEnabled);
+            _autoApplySelectorsReady = true;
             _statusTimer.Start();
+        }
+    }
+
+    private void EmbeddedIpSetModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_autoApplySelectorsReady || sender is not System.Windows.Controls.ComboBox comboBox)
+        {
+            return;
+        }
+
+        if (!comboBox.IsKeyboardFocusWithin && !comboBox.IsDropDownOpen)
+        {
+            return;
+        }
+
+        if (DataContext is MainViewModel viewModel && viewModel.ApplyIpSetModeCommand.CanExecute(null))
+        {
+            viewModel.ApplyIpSetModeCommand.Execute(null);
+        }
+    }
+
+    private void EmbeddedGameModeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_autoApplySelectorsReady || sender is not System.Windows.Controls.ComboBox comboBox)
+        {
+            return;
+        }
+
+        if (!comboBox.IsKeyboardFocusWithin && !comboBox.IsDropDownOpen)
+        {
+            return;
+        }
+
+        if (DataContext is MainViewModel viewModel && viewModel.ApplyGameModeCommand.CanExecute(null))
+        {
+            viewModel.ApplyGameModeCommand.Execute(null);
         }
     }
 
@@ -300,7 +408,7 @@ public partial class MainWindow : Window
 
     private void NormalizeToolTips(DependencyObject root)
     {
-        var sharedToolTipStyle = System.Windows.Application.Current.TryFindResource(typeof(System.Windows.Controls.ToolTip)) as Style;
+        var sharedToolTipStyle = System.Windows.Application.Current?.TryFindResource(typeof(System.Windows.Controls.ToolTip)) as Style;
 
         foreach (var element in EnumerateVisualTree(root).OfType<FrameworkElement>())
         {
@@ -393,6 +501,23 @@ public partial class MainWindow : Window
         }, DispatcherPriority.ApplicationIdle);
     }
 
+    private void NotifyIcon_BalloonTipClicked(object? sender, EventArgs e)
+    {
+        Dispatcher.BeginInvoke(async () =>
+        {
+            ShowMainWindow(showPendingStartupPrompt: false);
+
+            if (DataContext is MainViewModel viewModel && viewModel.HasPendingStartupUpdatePrompt())
+            {
+                await Task.Delay(220);
+                if (IsVisible)
+                {
+                    await viewModel.PresentPendingStartupUpdatePromptsAsync();
+                }
+            }
+        }, DispatcherPriority.ApplicationIdle);
+    }
+
     private void MainWindow_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         DetachViewModel();
@@ -408,6 +533,12 @@ public partial class MainWindow : Window
         if (_observedViewModel is null)
         {
             return;
+        }
+
+        if (e.PropertyName == nameof(MainViewModel.UseLightThemeEnabled) &&
+            _currentUseLightTheme != _observedViewModel.UseLightThemeEnabled)
+        {
+            ApplyTheme(_observedViewModel.UseLightThemeEnabled);
         }
 
         if (e.PropertyName == nameof(MainViewModel.InlineNotificationText) ||
@@ -469,7 +600,7 @@ public partial class MainWindow : Window
         var serviceStatus = new Services.WindowsServiceManager().GetStatus();
 
         var openItem = new Forms.ToolStripMenuItem("Открыть");
-        openItem.Click += (_, _) => Dispatcher.Invoke(ShowMainWindow);
+        openItem.Click += (_, _) => Dispatcher.Invoke(() => ShowMainWindow());
         _trayMenu.Items.Add(openItem);
         _trayMenu.Items.Add(new Forms.ToolStripSeparator());
 
@@ -582,7 +713,7 @@ public partial class MainWindow : Window
         parent.DropDownItems.Add(item);
     }
 
-    private void ShowMainWindow()
+    private void ShowMainWindow(bool showPendingStartupPrompt = true)
     {
         ShowInTaskbar = true;
         ShowActivated = true;
@@ -604,6 +735,20 @@ public partial class MainWindow : Window
         Topmost = true;
         Topmost = false;
         Focus();
+
+        if (showPendingStartupPrompt &&
+            DataContext is MainViewModel viewModel &&
+            viewModel.HasPendingStartupUpdatePrompt())
+        {
+            _ = Dispatcher.InvokeAsync(async () =>
+            {
+                await Task.Delay(160);
+                if (IsVisible)
+                {
+                    await viewModel.PresentPendingStartupUpdatePromptsAsync();
+                }
+            }).Task.Unwrap();
+        }
     }
 
     public void BringToFrontFromExternal()
@@ -618,9 +763,115 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (button.ContextMenu.IsOpen)
+        {
+            button.ContextMenu.IsOpen = false;
+            return;
+        }
+
         button.ContextMenu.PlacementTarget = button;
-        button.ContextMenu.Placement = PlacementMode.Bottom;
+        if (button.ContextMenu.Placement is PlacementMode.Mouse or PlacementMode.MousePoint)
+        {
+            button.ContextMenu.Placement = PlacementMode.Bottom;
+        }
+
         button.ContextMenu.IsOpen = true;
+    }
+
+    private void MenuHostButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button || button.ContextMenu is null)
+        {
+            return;
+        }
+
+        e.Handled = true;
+
+        if (button.ContextMenu.IsOpen)
+        {
+            button.ContextMenu.IsOpen = false;
+            return;
+        }
+
+        button.Focus();
+        button.ContextMenu.PlacementTarget = button;
+        if (button.ContextMenu.Placement is PlacementMode.Mouse or PlacementMode.MousePoint)
+        {
+            button.ContextMenu.Placement = PlacementMode.Bottom;
+        }
+
+        button.ContextMenu.IsOpen = true;
+    }
+
+    private void HomeRecommendedActionButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        switch (viewModel.HomeRecommendedActionKind)
+        {
+            case "install-zapret":
+                if (viewModel.HandleZapretInstallOrUpdateCommand.CanExecute(null))
+                {
+                    viewModel.HandleZapretInstallOrUpdateCommand.Execute(null);
+                }
+                break;
+            case "test-configs":
+                if (viewModel.RunTestsCommand.CanExecute(null))
+                {
+                    viewModel.RunTestsCommand.Execute(null);
+                }
+                break;
+            case "review-configs":
+                SelectSidebarTab(ConfigsTabItem);
+                break;
+            case "start-recommended":
+                if (viewModel.StartCommand.CanExecute(null))
+                {
+                    viewModel.StartCommand.Execute(null);
+                }
+                break;
+        }
+    }
+
+    private void HomeNavigateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button button)
+        {
+            return;
+        }
+
+        var target = button.CommandParameter as string ?? button.Tag as string;
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return;
+        }
+
+        switch (target)
+        {
+            case "configs":
+                SelectSidebarTab(ConfigsTabItem);
+                break;
+            case "telegram":
+                SelectSidebarTab(TelegramProxyTabItem);
+                break;
+            case "install":
+                SelectSidebarTab(InstallUpdatesTabItem);
+                break;
+        }
+    }
+
+    private void SelectSidebarTab(TabItem? tabItem)
+    {
+        if (tabItem is null)
+        {
+            return;
+        }
+
+        MainSidebarTabControl.SelectedItem = tabItem;
+        tabItem.Focus();
     }
 
     private void ConfigGrid_Sorting(object sender, DataGridSortingEventArgs e)
@@ -713,6 +964,262 @@ public partial class MainWindow : Window
         viewModel.OpenProbeDetails(row);
     }
 
+    private void RegularModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetConfigMode(useTcpMode: false);
+    }
+
+    private void TcpModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetConfigMode(useTcpMode: true);
+        RefreshTcpRows();
+    }
+
+    private void SetConfigMode(bool useTcpMode)
+    {
+        RegularModeButton.Style = (Style)FindResource(useTcpMode ? "SegmentedButtonStyle" : "SegmentedSelectedButtonStyle");
+        TcpModeButton.Style = (Style)FindResource(useTcpMode ? "SegmentedSelectedButtonStyle" : "SegmentedButtonStyle");
+        RegularTargetsPanel.Visibility = useTcpMode ? Visibility.Collapsed : Visibility.Visible;
+        RegularResultPanel.Visibility = Visibility.Visible;
+        RegularConfigGridPanel.Visibility = useTcpMode ? Visibility.Collapsed : Visibility.Visible;
+        TcpActionPanel.Visibility = useTcpMode ? Visibility.Visible : Visibility.Collapsed;
+        TcpConfigGridPanel.Visibility = useTcpMode ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void RefreshTcpRows()
+    {
+        if (DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        var selectedPath = (TcpConfigGrid.SelectedItem as TcpFreezeConfigTableRow)?.FilePath;
+        var context = viewModel.BuildTcpFreezeContext();
+
+        _tcpRows.Clear();
+        foreach (var descriptor in context.Configs)
+        {
+            _tcpRows.Add(BuildTcpRow(descriptor, _tcpResultMap.GetValueOrDefault(descriptor.FilePath)));
+        }
+
+        TcpConfigGrid.ItemsSource = _tcpRows;
+        var selected = _tcpRows.FirstOrDefault(row => string.Equals(row.FilePath, selectedPath, StringComparison.OrdinalIgnoreCase))
+                       ?? _tcpRows.FirstOrDefault(row => string.Equals(row.FilePath, context.InitiallySelectedFilePath, StringComparison.OrdinalIgnoreCase))
+                       ?? _tcpRows.FirstOrDefault();
+        TcpConfigGrid.SelectedItem = selected;
+        TcpRunSelectedButton.IsEnabled = _tcpRunCancellation is null && selected is not null;
+        TcpRunAllButton.IsEnabled = _tcpRunCancellation is null && _tcpRows.Count > 0;
+    }
+
+    private async void TcpRunSelectedButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (TcpConfigGrid.SelectedItem is not TcpFreezeConfigTableRow row)
+        {
+            return;
+        }
+
+        await RunEmbeddedTcpFreezeAsync(row.FilePath);
+    }
+
+    private async void TcpRunAllButton_Click(object sender, RoutedEventArgs e)
+    {
+        await RunEmbeddedTcpFreezeAsync(null);
+    }
+
+    private async Task RunEmbeddedTcpFreezeAsync(string? selectedConfigPath)
+    {
+        if (_tcpRunCancellation is not null || DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        _tcpRunCancellation = new CancellationTokenSource();
+        ResetEmbeddedTcpProgressState(string.IsNullOrWhiteSpace(selectedConfigPath) ? _tcpRows.Count : 1);
+        TcpRunSelectedButton.IsEnabled = false;
+        TcpRunAllButton.IsEnabled = false;
+        TcpStatusTextBlock.Text = string.IsNullOrWhiteSpace(selectedConfigPath)
+            ? "TCP 16-20 выполняется для всех видимых конфигов..."
+            : "TCP 16-20 выполняется для выбранного конфига...";
+
+        try
+        {
+            var progress = new Progress<string>(line =>
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    TcpStatusTextBlock.Text = TryBuildEmbeddedTcpProgressText(line) ?? line;
+                }
+            });
+
+            var report = await viewModel.RunTcpFreezeToolAsync(selectedConfigPath, progress, _tcpRunCancellation.Token);
+            _tcpResultMap.Clear();
+            foreach (var result in report.ConfigResults)
+            {
+                _tcpResultMap[result.FilePath] = result;
+            }
+
+            RefreshTcpRows();
+
+            var recommended = !string.IsNullOrWhiteSpace(report.RecommendedConfigPath)
+                ? _tcpRows.FirstOrDefault(row => string.Equals(row.FilePath, report.RecommendedConfigPath, StringComparison.OrdinalIgnoreCase))
+                : null;
+
+            TcpRecommendedTextBlock.Text = recommended is null
+                ? "Лучший конфиг не определён."
+                : $"Лучший конфиг: {recommended.ConfigName}";
+            TcpStatusTextBlock.Text = "Проверка TCP 16-20 завершена.";
+        }
+        catch (OperationCanceledException)
+        {
+            TcpStatusTextBlock.Text = "Проверка TCP 16-20 отменена.";
+        }
+        catch (Exception ex)
+        {
+            TcpStatusTextBlock.Text = "Ошибка TCP 16-20: " + DialogService.GetDisplayMessage(ex);
+        }
+        finally
+        {
+            _tcpRunCancellation.Dispose();
+            _tcpRunCancellation = null;
+            RefreshTcpRows();
+        }
+    }
+
+    private void ResetEmbeddedTcpProgressState(int totalConfigs)
+    {
+        _tcpRunTotalTargets = 0;
+        _tcpRunProcessedTargets = 0;
+        _tcpRunStartedConfigs = 0;
+        _tcpRunTotalConfigs = Math.Max(1, totalConfigs);
+        _tcpRunCurrentConfigName = null;
+    }
+
+    private string? TryBuildEmbeddedTcpProgressText(string line)
+    {
+        var suiteMatch = TcpSuiteCountRegex.Match(line);
+        if (suiteMatch.Success && int.TryParse(suiteMatch.Groups["count"].Value, out var totalTargets))
+        {
+            _tcpRunTotalTargets = totalTargets;
+            return $"Подготовлены цели TCP 16-20: {totalTargets}.";
+        }
+
+        var configHeaderMatch = TcpConfigHeaderRegex.Match(line);
+        if (configHeaderMatch.Success &&
+            !string.Equals(configHeaderMatch.Groups["name"].Value, "Сводка", StringComparison.OrdinalIgnoreCase))
+        {
+            _tcpRunCurrentConfigName = configHeaderMatch.Groups["name"].Value.Trim();
+            _tcpRunProcessedTargets = 0;
+            _tcpRunStartedConfigs = Math.Min(_tcpRunStartedConfigs + 1, _tcpRunTotalConfigs);
+            return _tcpRunTotalConfigs > 1
+                ? $"Проверяем конфиг {_tcpRunStartedConfigs} из {_tcpRunTotalConfigs}: {_tcpRunCurrentConfigName}."
+                : $"Проверяем {_tcpRunCurrentConfigName}.";
+        }
+
+        var targetLineMatch = TcpTargetLineRegex.Match(line);
+        if (targetLineMatch.Success)
+        {
+            _tcpRunProcessedTargets++;
+            if (!string.IsNullOrWhiteSpace(_tcpRunCurrentConfigName) && _tcpRunTotalTargets > 0)
+            {
+                return _tcpRunTotalConfigs > 1
+                    ? $"{_tcpRunCurrentConfigName}: {_tcpRunProcessedTargets} из {_tcpRunTotalTargets} целей."
+                    : $"Проверяем {_tcpRunCurrentConfigName}: {_tcpRunProcessedTargets} из {_tcpRunTotalTargets} целей.";
+            }
+        }
+
+        return null;
+    }
+
+    private void TcpDetailsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: TcpFreezeConfigTableRow row } ||
+            !_tcpResultMap.TryGetValue(row.FilePath, out var result))
+        {
+            return;
+        }
+
+        try
+        {
+            _embeddedTcpDetailsWindow?.Close();
+        }
+        catch
+        {
+        }
+
+        var window = new TcpFreezeDetailsWindow(result, _currentUseLightTheme)
+        {
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_embeddedTcpDetailsWindow, window))
+            {
+                _embeddedTcpDetailsWindow = null;
+            }
+        };
+
+        _embeddedTcpDetailsWindow = window;
+        window.Show();
+        window.Activate();
+    }
+
+    private static TcpFreezeConfigTableRow BuildTcpRow(TcpFreezeConfigDescriptor descriptor, TcpFreezeConfigResult? result)
+    {
+        return new TcpFreezeConfigTableRow
+        {
+            ConfigName = descriptor.ConfigName,
+            FileName = descriptor.FileName,
+            FilePath = descriptor.FilePath,
+            OkCount = result?.OkCount,
+            BlockedCount = result?.BlockedCount,
+            FailCount = result?.FailCount,
+            UnsupportedCount = result?.UnsupportedCount,
+            SummaryText = BuildTcpSummaryText(result),
+            HasResult = result is not null
+        };
+    }
+
+    private static string BuildTcpSummaryText(TcpFreezeConfigResult? result)
+    {
+        if (result is null)
+        {
+            return string.Empty;
+        }
+
+        if (result.BlockedCount > 0 && result.BlockedTargets.Count > 0)
+        {
+            return $"Подозрение на freeze: {string.Join(", ", result.BlockedTargets.Take(2))}";
+        }
+
+        if (result.FailCount > 0)
+        {
+            return "Есть ошибки соединения";
+        }
+
+        if (result.UnsupportedCount > 0)
+        {
+            return "Есть неподдерживаемые проверки";
+        }
+
+        return "Подозрений на freeze не найдено";
+    }
+
+    private void ResetProbeResultsButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel)
+        {
+            return;
+        }
+
+        viewModel.ClearProbeResults();
+        _tcpResultMap.Clear();
+        RefreshTcpRows();
+        TcpStatusTextBlock.Text = "Выберите конфиг в таблице и запустите проверку TCP 16-20.";
+        TcpRecommendedTextBlock.Text = "Лучший конфиг появится после проверки.";
+    }
+
     private void HideToTray()
     {
         ShowInTaskbar = false;
@@ -751,53 +1258,77 @@ public partial class MainWindow : Window
     private void ApplyTheme(bool useLightTheme)
     {
         _currentUseLightTheme = useLightTheme;
-        SetBrushColor("AppBgBrush", useLightTheme ? "#E8F1F8" : "#06111C");
-        SetBrushColor("CardBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("CardBrush2", useLightTheme ? "#EFF6FC" : "#0D1C2C");
-        SetBrushColor("CardEdgeBrush", useLightTheme ? "#9AB7D3" : "#214A70");
-        SetBrushColor("AccentBrush", useLightTheme ? "#4FD593" : "#47C78B");
-        SetBrushColor("AccentHoverBrush", useLightTheme ? "#67E1A5" : "#5DD89B");
-        SetBrushColor("AccentBorderBrush", useLightTheme ? "#7CB392" : "#7BE2B2");
-        SetBrushColor("ActionBrush", useLightTheme ? "#DCE9F5" : "#173454");
-        SetBrushColor("ActionHoverBrush", useLightTheme ? "#CFE1F1" : "#21476F");
-        SetBrushColor("TextMutedBrush", useLightTheme ? "#4F6B88" : "#9AB2CD");
-        SetBrushColor("MainTextBrush", useLightTheme ? "#183049" : "#FFFFFF");
-        SetBrushColor("TitleBarBrush", useLightTheme ? "#DDEAF5" : "#081725");
-        SetBrushColor("InputBrush", useLightTheme ? "#FFFFFF" : "#0A1725");
-        SetBrushColor("InputBorderBrush", useLightTheme ? "#87A8C8" : "#2D5379");
-        SetBrushColor("DisabledBrush", useLightTheme ? "#D4E2EE" : "#13283F");
-        SetBrushColor("DisabledBorderBrush", useLightTheme ? "#AAC0D6" : "#264766");
-        SetBrushColor("DisabledTextBrush", useLightTheme ? "#6E839A" : "#8EA6C2");
-        SetBrushColor("SelectionBrush", useLightTheme ? "#BCD0E3" : "#35506A");
-        SetBrushColor("InnerCardBrush", useLightTheme ? "#F4F8FC" : "#0C1A28");
-        SetBrushColor("InnerCardBorderBrush", useLightTheme ? "#9CB7CF" : "#2C5478");
-        SetBrushColor("TooltipBackgroundBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("TooltipBorderBrush", useLightTheme ? "#87A8C8" : "#31597F");
-        SetBrushColor("TooltipTextBrush", useLightTheme ? "#183049" : "#EAF3FC");
-        SetBrushColor("ScrollTrackBrush", useLightTheme ? "#E4EEF7" : "#102235");
-        SetBrushColor("ScrollThumbBrush", useLightTheme ? "#8EA9C2" : "#4A6A86");
-        SetBrushColor("ScrollThumbHoverBrush", useLightTheme ? "#7897B5" : "#5B7C98");
-        SetBrushColor("ProbeBadgeSuccessBackgroundBrush", useLightTheme ? "#D9EDE3" : "#27423D");
-        SetBrushColor("ProbeBadgeSuccessBorderBrush", useLightTheme ? "#A8C4B7" : "#6C9184");
-        SetBrushColor("ProbeBadgeSuccessForegroundBrush", useLightTheme ? "#2F8E63" : "#7FE0B4");
-        SetBrushColor("ProbeBadgePartialBackgroundBrush", useLightTheme ? "#EEE4D3" : "#4A422E");
-        SetBrushColor("ProbeBadgePartialBorderBrush", useLightTheme ? "#C7B18A" : "#A89566");
-        SetBrushColor("ProbeBadgePartialForegroundBrush", useLightTheme ? "#9A6E1D" : "#E3C168");
-        SetBrushColor("ProbeBadgeFailureBackgroundBrush", useLightTheme ? "#ECDEDF" : "#4F3537");
-        SetBrushColor("ProbeBadgeFailureBorderBrush", useLightTheme ? "#C29A9A" : "#B88484");
-        SetBrushColor("ProbeBadgeFailureForegroundBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
-        SetBrushColor("ProbeBadgeNeutralBackgroundBrush", useLightTheme ? "#EEF5FB" : "#0C1A28");
-        SetBrushColor("ProbeBadgeNeutralBorderBrush", useLightTheme ? "#9CB7CF" : "#274A6B");
-        SetBrushColor("ProbeBadgeNeutralForegroundBrush", useLightTheme ? "#5E7893" : "#9AB2CD");
-        SetBrushColor("SummarySuccessBadgeBrush", useLightTheme ? "#D9EDE3" : "#27423D");
-        SetBrushColor("SummarySuccessBadgeBorderBrush", useLightTheme ? "#A8C4B7" : "#6C9184");
-        SetBrushColor("SummarySuccessBadgeIconBrush", useLightTheme ? "#2E6350" : "#7FE0B4");
-        SetBrushColor("SummaryPartialBadgeBrush", useLightTheme ? "#EEE4D3" : "#4A422E");
-        SetBrushColor("SummaryPartialBadgeBorderBrush", useLightTheme ? "#C7B18A" : "#A89566");
-        SetBrushColor("SummaryPartialBadgeIconBrush", useLightTheme ? "#755B2F" : "#E3C168");
-        SetBrushColor("SummaryFailureBadgeBrush", useLightTheme ? "#ECDEDF" : "#4F3537");
-        SetBrushColor("SummaryFailureBadgeBorderBrush", useLightTheme ? "#C29A9A" : "#B88484");
-        SetBrushColor("SummaryFailureBadgeIconBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
+        SetBrushColor("AppBgBrush", useLightTheme ? "#F4F7FB" : "#08111D");
+        SetBrushColor("CardBrush", useLightTheme ? "#FFFFFF" : "#0E1828");
+        SetBrushColor("CardBrush2", useLightTheme ? "#F8FBFF" : "#0B1322");
+        SetBrushColor("CardEdgeBrush", useLightTheme ? "#DCE7F2" : "#22344E");
+        SetBrushColor("AccentBrush", useLightTheme ? "#2B70F7" : "#2F6BFF");
+        SetBrushColor("AccentHoverBrush", useLightTheme ? "#1F5EDD" : "#4A82FF");
+        SetBrushColor("AccentBorderBrush", useLightTheme ? "#5C90FF" : "#6E9CFF");
+        SetBrushColor("SuccessBrush", useLightTheme ? "#20A86D" : "#1E9E68");
+        SetBrushColor("SuccessHoverBrush", useLightTheme ? "#15965F" : "#27B777");
+        SetBrushColor("SuccessBorderBrush", useLightTheme ? "#58C695" : "#4AD497");
+        SetBrushColor("DangerBrush", useLightTheme ? "#D55454" : "#A94141");
+        SetBrushColor("DangerHoverBrush", useLightTheme ? "#C74444" : "#C04D4D");
+        SetBrushColor("DangerBorderBrush", useLightTheme ? "#E48787" : "#DB7777");
+        SetBrushColor("ActionBrush", useLightTheme ? "#F6F9FD" : "#111C2D");
+        SetBrushColor("ActionHoverBrush", useLightTheme ? "#EDF3FA" : "#172536");
+        SetBrushColor("ActionBorderBrush", useLightTheme ? "#D8E2EF" : "#263952");
+        SetBrushColor("TextMutedBrush", useLightTheme ? "#516784" : "#90A3BF");
+        SetBrushColor("MainTextBrush", useLightTheme ? "#0E1B2B" : "#F4F8FF");
+        SetBrushColor("TitleBarBrush", useLightTheme ? "#FAFCFF" : "#0A1423");
+        SetBrushColor("InputBrush", useLightTheme ? "#FFFFFF" : "#0C1626");
+        SetBrushColor("InputBorderBrush", useLightTheme ? "#D8E3F0" : "#24364F");
+        SetBrushColor("DisabledBrush", useLightTheme ? "#EEF3F8" : "#101827");
+        SetBrushColor("DisabledBorderBrush", useLightTheme ? "#D6E0EC" : "#1A2A3E");
+        SetBrushColor("DisabledTextBrush", useLightTheme ? "#7489A3" : "#61748D");
+        SetBrushColor("SelectionBrush", useLightTheme ? "#E8F0FF" : "#142848");
+        SetBrushColor("InnerCardBrush", useLightTheme ? "#FBFDFF" : "#0A1523");
+        SetBrushColor("InnerCardBorderBrush", useLightTheme ? "#E4EDF7" : "#1D3048");
+        SetBrushColor("TooltipBackgroundBrush", useLightTheme ? "#FFFFFF" : "#0C1625");
+        SetBrushColor("TooltipBorderBrush", useLightTheme ? "#D5E0EB" : "#304560");
+        SetBrushColor("TooltipTextBrush", useLightTheme ? "#112034" : "#F3F7FE");
+        SetBrushColor("ScrollTrackBrush", useLightTheme ? "#EEF3F8" : "#101A2A");
+        SetBrushColor("ScrollThumbBrush", useLightTheme ? "#B1C0D2" : "#3D526D");
+        SetBrushColor("ScrollThumbHoverBrush", useLightTheme ? "#94A8C0" : "#587392");
+        SetBrushColor("ProbeBadgeSuccessBackgroundBrush", useLightTheme ? "#E6F6EF" : "#15382C");
+        SetBrushColor("ProbeBadgeSuccessBorderBrush", useLightTheme ? "#9AD4B9" : "#2A8761");
+        SetBrushColor("ProbeBadgeSuccessForegroundBrush", useLightTheme ? "#247B53" : "#77E0AF");
+        SetBrushColor("ProbeBadgePartialBackgroundBrush", useLightTheme ? "#FFF2DA" : "#43361C");
+        SetBrushColor("ProbeBadgePartialBorderBrush", useLightTheme ? "#E3BE79" : "#A88035");
+        SetBrushColor("ProbeBadgePartialForegroundBrush", useLightTheme ? "#A56E14" : "#F3C76C");
+        SetBrushColor("ProbeBadgeFailureBackgroundBrush", useLightTheme ? "#FCEAEA" : "#3E2023");
+        SetBrushColor("ProbeBadgeFailureBorderBrush", useLightTheme ? "#E4A2A7" : "#A54A57");
+        SetBrushColor("ProbeBadgeFailureForegroundBrush", useLightTheme ? "#B24B58" : "#F0A4AD");
+        SetBrushColor("ProbeBadgeNeutralBackgroundBrush", useLightTheme ? "#F2F6FB" : "#101B2D");
+        SetBrushColor("ProbeBadgeNeutralBorderBrush", useLightTheme ? "#C7D6E6" : "#314A66");
+        SetBrushColor("ProbeBadgeNeutralForegroundBrush", useLightTheme ? "#667A95" : "#9AB0CB");
+        SetBrushColor("SummarySuccessBadgeBrush", useLightTheme ? "#E6F6EF" : "#15382C");
+        SetBrushColor("SummarySuccessBadgeBorderBrush", useLightTheme ? "#9AD4B9" : "#2A8761");
+        SetBrushColor("SummarySuccessBadgeIconBrush", useLightTheme ? "#247B53" : "#77E0AF");
+        SetBrushColor("SummaryPartialBadgeBrush", useLightTheme ? "#FFF2DA" : "#43361C");
+        SetBrushColor("SummaryPartialBadgeBorderBrush", useLightTheme ? "#E3BE79" : "#A88035");
+        SetBrushColor("SummaryPartialBadgeIconBrush", useLightTheme ? "#A56E14" : "#F3C76C");
+        SetBrushColor("SummaryFailureBadgeBrush", useLightTheme ? "#FCEAEA" : "#3E2023");
+        SetBrushColor("SummaryFailureBadgeBorderBrush", useLightTheme ? "#E4A2A7" : "#A54A57");
+        SetBrushColor("SummaryFailureBadgeIconBrush", useLightTheme ? "#B24B58" : "#F0A4AD");
+        SetBrushColor("InstallAvailableBadgeBrush", useLightTheme ? "#EAF1FF" : "#152746");
+        SetBrushColor("InstallAvailableBadgeBorderBrush", useLightTheme ? "#BBD0FF" : "#2C4F8B");
+        SetBrushColor("InstallAvailableBadgeForegroundBrush", useLightTheme ? "#3E66C4" : "#8EB8FF");
+        SetBrushColor("SoftAccentBrush", useLightTheme ? "#E8F0FF" : "#16233A");
+        SetBrushColor("SoftAccentBorderBrush", useLightTheme ? "#7EA3E6" : "#4C6EA9");
+        SetBrushColor("SoftAccentForegroundBrush", useLightTheme ? "#244E97" : "#B7CCFF");
+        SetBrushColor("SoftAccentHoverBrush", useLightTheme ? "#DDE8FD" : "#1B2B46");
+        SetBrushColor("RunningStatusBadgeBrush", useLightTheme ? "#E8F7EF" : "#17382A");
+        SetBrushColor("RunningStatusBadgeBorderBrush", useLightTheme ? "#9AD1B4" : "#2A7C58");
+        SetBrushColor("RunningStatusBadgeForegroundBrush", useLightTheme ? "#1C7A4C" : "#6AE5A8");
+        SetBrushColor("StoppedStatusBadgeBrush", useLightTheme ? "#F9ECEF" : "#22161B");
+        SetBrushColor("StoppedStatusBadgeBorderBrush", useLightTheme ? "#D89BA7" : "#5E2D39");
+        SetBrushColor("StoppedStatusBadgeForegroundBrush", useLightTheme ? "#A34A59" : "#E8A4AE");
+        SetBrushColor("SoftDangerBrush", useLightTheme ? "#FDF0F2" : "#22161B");
+        SetBrushColor("SoftDangerBorderBrush", useLightTheme ? "#E6B8C0" : "#5E2D39");
+        SetBrushColor("SoftDangerForegroundBrush", useLightTheme ? "#B24B58" : "#F08A99");
+        SetBrushColor("SoftDangerHoverBrush", useLightTheme ? "#FAE4E8" : "#2B1B21");
 
         ApplyWindowFrame(useLightTheme);
         ApplyThemeToOpenWindows(useLightTheme);
@@ -862,18 +1393,18 @@ public partial class MainWindow : Window
             _ = DwmSetWindowAttribute(handle, 33, ref cornerPreference, sizeof(int));
 
             var borderColor = useLightTheme
-                ? ColorToColorRef(0xDD, 0xEA, 0xF5)
-                : ColorToColorRef(0x08, 0x17, 0x25);
+                ? ColorToColorRef(0xFA, 0xFC, 0xFF)
+                : ColorToColorRef(0x0A, 0x14, 0x23);
             _ = DwmSetWindowAttribute(handle, 34, ref borderColor, sizeof(uint));
 
             var captionColor = useLightTheme
-                ? ColorToColorRef(0xDD, 0xEA, 0xF5)
-                : ColorToColorRef(0x08, 0x17, 0x25);
+                ? ColorToColorRef(0xFA, 0xFC, 0xFF)
+                : ColorToColorRef(0x0A, 0x14, 0x23);
             _ = DwmSetWindowAttribute(handle, 35, ref captionColor, sizeof(uint));
 
             var textColor = useLightTheme
-                ? ColorToColorRef(0x18, 0x30, 0x49)
-                : ColorToColorRef(0xFF, 0xFF, 0xFF);
+                ? ColorToColorRef(0x0E, 0x1B, 0x2B)
+                : ColorToColorRef(0xF4, 0xF8, 0xFF);
             _ = DwmSetWindowAttribute(handle, 36, ref textColor, sizeof(uint));
         }
         catch
@@ -883,8 +1414,19 @@ public partial class MainWindow : Window
 
     private void ApplyThemeToOpenWindows(bool useLightTheme)
     {
-        foreach (Window window in System.Windows.Application.Current.Windows)
+        var windows = System.Windows.Application.Current?.Windows;
+        if (windows is null)
         {
+            return;
+        }
+
+        foreach (Window? window in windows)
+        {
+            if (window is null)
+            {
+                continue;
+            }
+
             if (ReferenceEquals(window, this))
             {
                 continue;
@@ -922,12 +1464,14 @@ public partial class MainWindow : Window
         if (WindowState == WindowState.Maximized)
         {
             chrome.CornerRadius = new CornerRadius(0);
+            chrome.ResizeBorderThickness = new Thickness(0);
             WindowRootBorder.CornerRadius = new CornerRadius(0);
             WindowRootGrid.Margin = new Thickness(8);
             return;
         }
 
         chrome.CornerRadius = new CornerRadius(14);
+        chrome.ResizeBorderThickness = new Thickness(0, 0, 0, 8);
         WindowRootBorder.CornerRadius = new CornerRadius(14);
         WindowRootGrid.Margin = new Thickness(0);
     }

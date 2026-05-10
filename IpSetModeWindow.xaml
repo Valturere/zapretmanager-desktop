@@ -276,10 +276,14 @@
                         Height="30"
                         Margin="12,0,0,0"
                         Click="CloseButton_Click"
-                        Content="×"
-                        FontSize="18"
                         Cursor="Hand"
-                        Style="{StaticResource ChromeButtonStyle}" />
+                        Style="{StaticResource ChromeButtonStyle}">
+                    <Path Data="M13.46 12L19 17.54V19h-1.46L12 13.46L6.46 19H5v-1.46L10.54 12L5 6.46V5h1.46L12 10.54L17.54 5H19v1.46z"
+                          Width="14"
+                          Height="14"
+                          Stretch="Uniform"
+                          Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                </Button>
             </Grid>
 
             <StackPanel Grid.Row="1" Margin="0,16,0,0">

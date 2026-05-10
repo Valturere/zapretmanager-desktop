@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using ZapretManager.Services;
 
 namespace ZapretManager.Models;
 
@@ -14,8 +15,12 @@ public sealed class AppSettings
     public bool StartWithWindowsEnabled { get; set; } = false;
     public bool StartWithWindowsPreferenceInitialized { get; set; }
     public bool CloseToTrayEnabled { get; set; } = true;
-    public bool MinimizeToTrayEnabled { get; set; } = true;
+    public bool MinimizeToTrayEnabled { get; set; } = false;
     public bool UseLightTheme { get; set; }
+    public string ApplicationThemeMode { get; set; } = ApplicationThemeService.SystemMode;
+    public string UpdateCheckIntervalValue { get; set; } = "2h";
+    public DateTime? LastAutomaticUpdateCheckUtc { get; set; }
+    public bool AutoUpdateIpSetOnStartupEnabled { get; set; } = true;
     public string PreferredGameModeValue { get; set; } = "all";
     public string PreferredDnsProfileKey { get; set; } = "system";
     public bool DnsOverHttpsEnabled { get; set; }
@@ -27,4 +32,6 @@ public sealed class AppSettings
     public List<string> HiddenConfigPaths { get; set; } = [];
     public bool SkipHideConfigConfirmation { get; set; }
     public double? ProbeAverageProfileSeconds { get; set; }
+    public bool TgWsProxyAutoCheckUpdatesEnabled { get; set; } = true;
+    public string? LastTgWsProxyExecutablePath { get; set; }
 }

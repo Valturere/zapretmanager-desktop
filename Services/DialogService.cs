@@ -95,6 +95,27 @@ public static class DialogService
         return dialog.Choice;
     }
 
+    public static DialogChoice ChooseErrorCustom(
+        string message,
+        string title = "Zapret Manager",
+        Window? owner = null,
+        string primaryButtonText = "Исправить",
+        string secondaryButtonText = "Закрыть")
+    {
+        var dialog = CreateDialog(
+            title,
+            message,
+            isError: true,
+            owner,
+            DialogButtons.YesNo,
+            rememberText: null,
+            primaryButtonText,
+            secondaryButtonText,
+            tertiaryButtonText: null);
+        _ = dialog.ShowDialog();
+        return dialog.Choice;
+    }
+
     public static DeleteZapretChoice ChooseDeleteZapretMode(
         string rootPath,
         string title = "Zapret Manager",
@@ -156,7 +177,8 @@ public static class DialogService
             return viewModel.UseLightThemeEnabled;
         }
 
-        return new AppSettingsService().Load().UseLightTheme;
+        var settings = new AppSettingsService().Load();
+        return ApplicationThemeService.ResolveUseLightTheme(settings.ApplicationThemeMode, settings.UseLightTheme);
     }
 
     public static string GetDisplayMessage(Exception exception, string? fallback = null)

@@ -298,19 +298,19 @@ public partial class AllowDomainsImportWindow : Window
 
     private void ApplyTheme(bool useLightTheme)
     {
-        SetBrushColor("WindowBgBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("WindowBorderBrush", useLightTheme ? "#9AB7D3" : "#295276");
-        SetBrushColor("TitleBrush", useLightTheme ? "#183049" : "#FFFFFF");
-        SetBrushColor("TextBrush", useLightTheme ? "#4F6B88" : "#D5E4F5");
-        SetBrushColor("MutedBrush", useLightTheme ? "#68839E" : "#89A6C2");
-        SetBrushColor("InputBrush", useLightTheme ? "#FFFFFF" : "#0A1725");
-        SetBrushColor("InputBorderBrush", useLightTheme ? "#87A8C8" : "#2D5379");
-        SetBrushColor("ActionBrush", useLightTheme ? "#DCE9F5" : "#173454");
-        SetBrushColor("ActionBorderBrush", useLightTheme ? "#87A8C8" : "#31597F");
-        SetBrushColor("PrimaryBrush", useLightTheme ? "#4FD593" : "#47C78B");
-        SetBrushColor("PrimaryBorderBrush", useLightTheme ? "#7CB392" : "#7BE2B2");
-        SetBrushColor("PrimaryTextBrush", "#0A2416");
-        SetBrushColor("SelectionBrush", useLightTheme ? "#EAF3FC" : "#183149");
+        SetBrushColor("WindowBgBrush", useLightTheme ? "#FAFCFF" : "#0E1828");
+        SetBrushColor("WindowBorderBrush", useLightTheme ? "#DCE7F2" : "#22344E");
+        SetBrushColor("TitleBrush", useLightTheme ? "#0E1B2B" : "#F4F8FF");
+        SetBrushColor("TextBrush", useLightTheme ? "#22364D" : "#D6E3F5");
+        SetBrushColor("MutedBrush", useLightTheme ? "#637693" : "#90A3BF");
+        SetBrushColor("InputBrush", useLightTheme ? "#FFFFFF" : "#0C1626");
+        SetBrushColor("InputBorderBrush", useLightTheme ? "#D8E3F0" : "#24364F");
+        SetBrushColor("ActionBrush", useLightTheme ? "#F6F9FD" : "#111C2D");
+        SetBrushColor("ActionBorderBrush", useLightTheme ? "#D8E2EF" : "#263952");
+        SetBrushColor("PrimaryBrush", useLightTheme ? "#2B70F7" : "#2F6BFF");
+        SetBrushColor("PrimaryBorderBrush", useLightTheme ? "#5C90FF" : "#6E9CFF");
+        SetBrushColor("PrimaryTextBrush", "#F7FBFF");
+        SetBrushColor("SelectionBrush", useLightTheme ? "#E8F0FF" : "#142848");
     }
 
     private void SetBrushColor(string resourceKey, string hexColor)

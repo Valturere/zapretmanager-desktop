@@ -5,14 +5,15 @@ using System.Text;
 using System.Threading;
 using System.Windows.Threading;
 using System.ServiceProcess;
+using System.Security.Cryptography;
 using Forms = System.Windows.Forms;
 
 namespace ZapretManager;
 
 public partial class App : System.Windows.Application
 {
-    private const string InstanceMutexName = @"Local\ZapretManager.Instance";
-    private const string ActivateEventName = @"Local\ZapretManager.Activate";
+    private const string InstanceMutexNamePrefix = @"Local\ZapretManager.Instance.";
+    private const string ActivateEventNamePrefix = @"Local\ZapretManager.Activate.";
     private const string AdminTaskLogEnvironmentVariable = "ZAPRETMANAGER_ADMIN_TASK_LOG";
 
     private Mutex? _instanceMutex;
@@ -65,23 +66,31 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        var startHidden = e.Args.Any(arg => string.Equals(arg, "--start-hidden", StringComparison.OrdinalIgnoreCase));
-        var viewModel = new MainViewModel();
-
-        var window = new MainWindow(startHidden, viewModel.UseLightThemeEnabled)
+        try
         {
-            DataContext = viewModel
-        };
+            var startHidden = e.Args.Any(arg => string.Equals(arg, "--start-hidden", StringComparison.OrdinalIgnoreCase));
+            var viewModel = new MainViewModel();
 
-        if (startHidden)
-        {
-            window.ShowInTaskbar = false;
-            window.ShowActivated = false;
-            window.WindowState = WindowState.Minimized;
+            var window = new MainWindow(startHidden, viewModel.UseLightThemeEnabled)
+            {
+                DataContext = viewModel
+            };
+
+            if (startHidden)
+            {
+                window.ShowInTaskbar = false;
+                window.ShowActivated = false;
+                window.WindowState = WindowState.Minimized;
+            }
+
+            MainWindow = window;
+            window.Show();
         }
-
-        MainWindow = window;
-        window.Show();
+        catch (Exception ex)
+        {
+            DialogService.ShowError(ex, "Zapret Manager");
+            Shutdown(1);
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -102,9 +111,10 @@ public partial class App : System.Windows.Application
 
     private bool EnsureSingleInstance()
     {
-        _instanceMutex = new Mutex(initiallyOwned: true, InstanceMutexName, out var createdNew);
+        var instanceKey = ResolveInstanceKey();
+        _instanceMutex = new Mutex(initiallyOwned: true, InstanceMutexNamePrefix + instanceKey, out var createdNew);
         _ownsInstanceMutex = createdNew;
-        _activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventName);
+        _activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventNamePrefix + instanceKey);
 
         if (!createdNew)
         {
@@ -126,6 +136,17 @@ public partial class App : System.Windows.Application
             executeOnlyOnce: false);
 
         return true;
+    }
+
+    private static string ResolveInstanceKey()
+    {
+        var processPath = Environment.ProcessPath;
+        var pathSeed = !string.IsNullOrWhiteSpace(processPath)
+            ? processPath
+            : Path.Combine(AppContext.BaseDirectory, "ZapretManager.exe");
+        var fullPath = Path.GetFullPath(pathSeed).ToUpperInvariant();
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(fullPath));
+        return Convert.ToHexString(bytes[..8]);
     }
 
     private void App_DispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
@@ -160,4 +181,5 @@ public partial class App : System.Windows.Application
         {
         }
     }
+
 }

@@ -242,14 +242,44 @@ public sealed class FileLockInspectorService
         var isShell = name.Equals("cmd.exe", StringComparison.OrdinalIgnoreCase) ||
                       name.Equals("powershell.exe", StringComparison.OrdinalIgnoreCase) ||
                       name.Equals("pwsh.exe", StringComparison.OrdinalIgnoreCase);
+        var isConsoleHost = name.Equals("conhost.exe", StringComparison.OrdinalIgnoreCase) ||
+                            name.Equals("openconsole.exe", StringComparison.OrdinalIgnoreCase);
+        var isServiceHost = name.Equals("ZapretManager.exe", StringComparison.OrdinalIgnoreCase) &&
+                            process.CommandLine.Contains("--service-host", StringComparison.OrdinalIgnoreCase);
 
-        if (!isShell)
+        if (isServiceHost)
+        {
+            return ReferencesInstallationRoot(process.ExecutablePath, process.CommandLine, rootPath);
+        }
+
+        if (isShell)
+        {
+            return ReferencesInstallationRoot(process.ExecutablePath, process.CommandLine, rootPath) ||
+                   IsCheckUpdatesShell(process.CommandLine);
+        }
+
+        if (!isConsoleHost)
         {
             return false;
         }
 
-        return ReferencesInstallationRoot(process.ExecutablePath, process.CommandLine, rootPath) ||
-               IsCheckUpdatesShell(process.CommandLine);
+        if (process.ParentProcessId <= 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using var parent = Process.GetProcessById(process.ParentProcessId);
+            var parentName = parent.ProcessName;
+            return parentName.Equals("cmd", StringComparison.OrdinalIgnoreCase) ||
+                   parentName.Equals("powershell", StringComparison.OrdinalIgnoreCase) ||
+                   parentName.Equals("pwsh", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool ReferencesInstallationRoot(string executablePath, string commandLine, string rootPath)

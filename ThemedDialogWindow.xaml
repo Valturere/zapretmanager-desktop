@@ -25,6 +25,10 @@
         <SolidColorBrush x:Key="DialogPrimaryTextBrush" Color="#0A2416" />
         <SolidColorBrush x:Key="DialogPanelBrush" Color="#0C1A28" />
         <SolidColorBrush x:Key="DialogPanelBorderBrush" Color="#274A6B" />
+        <Geometry x:Key="DialogInfoGeometry">M11 9h2V7h-2m1 13c-4.41 0-8-3.59-8-8s3.59-8 8-8s8 3.59 8 8s-3.59 8-8 8m0-18A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2m-1 15h2v-6h-2z</Geometry>
+        <Geometry x:Key="DialogHelpGeometry">M10 17h2v-2h-2m1-13A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2m0 18a8 8 0 0 1-8-8a8 8 0 0 1 8-8a8 8 0 0 1 8 8a8 8 0 0 1-8 8m0-14a4 4 0 0 0-4 4h2a2 2 0 0 1 4 0c0 2-3 1.75-3 5h2c0-2.25 3-2.5 3-5a4 4 0 0 0-4-4z</Geometry>
+        <Geometry x:Key="DialogAlertGeometry">M11 15h2v2h-2zm0-8h2v6h-2zm1-5C6.47 2 2 6.5 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2m0 18a8 8 0 0 1-8-8a8 8 0 0 1 8-8a8 8 0 0 1 8 8a8 8 0 0 1-8 8</Geometry>
+        <Geometry x:Key="DialogCloseGeometry">M13.46 12L19 17.54V19h-1.46L12 13.46L6.46 19H5v-1.46L10.54 12L5 6.46V5h1.46L12 10.54L17.54 5H19v1.46z</Geometry>
         <Style x:Key="DialogActionButtonStyle" TargetType="Button">
             <Setter Property="Template">
                 <Setter.Value>
@@ -136,13 +140,28 @@
                         BorderBrush="{DynamicResource DialogPrimaryBorderBrush}"
                         BorderThickness="1"
                         CornerRadius="10">
-                    <TextBlock x:Name="StatusGlyphTextBlock"
-                               Text="i"
-                               Foreground="{DynamicResource DialogPrimaryTextBrush}"
-                               FontSize="18"
-                               FontWeight="Bold"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center" />
+                    <Path x:Name="StatusGlyphPath"
+                          Width="18"
+                          Height="18"
+                          Stretch="Uniform"
+                          Fill="{DynamicResource DialogPrimaryTextBrush}"
+                          Data="{StaticResource DialogInfoGeometry}"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Center">
+                        <Path.Style>
+                            <Style TargetType="Path">
+                                <Setter Property="Data" Value="{StaticResource DialogInfoGeometry}" />
+                                <Style.Triggers>
+                                    <Trigger Property="Tag" Value="error">
+                                        <Setter Property="Data" Value="{StaticResource DialogAlertGeometry}" />
+                                    </Trigger>
+                                    <Trigger Property="Tag" Value="question">
+                                        <Setter Property="Data" Value="{StaticResource DialogHelpGeometry}" />
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Path.Style>
+                    </Path>
                 </Border>
                 <StackPanel Grid.Column="2"
                             VerticalAlignment="Center">
@@ -161,10 +180,14 @@
                         Height="30"
                         Margin="12,0,0,0"
                         Click="CloseButton_Click"
-                        Content="×"
-                        FontSize="18"
                         Style="{StaticResource DialogChromeButtonStyle}"
-                        Cursor="Hand" />
+                        Cursor="Hand">
+                    <Path Data="{StaticResource DialogCloseGeometry}"
+                          Width="14"
+                          Height="14"
+                          Stretch="Uniform"
+                          Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                </Button>
             </Grid>
 
             <Border Grid.Row="1"

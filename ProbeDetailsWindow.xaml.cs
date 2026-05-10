@@ -41,7 +41,7 @@ public partial class ProbeDetailsWindow : Window
     {
         TitleTextBlock.Text = _configName;
         SummaryTextBlock.Text = _probeResult.Summary == "✓"
-            ? "Все цели доступны"
+            ? "Все домены доступны"
             : _probeResult.Summary.Length > 1
                 ? _probeResult.Summary[1..].TrimStart()
                 : _probeResult.Summary;
@@ -125,48 +125,48 @@ public partial class ProbeDetailsWindow : Window
 
     private void ApplyTheme(bool useLightTheme)
     {
-        SetBrushColor("WindowBgBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("WindowBorderBrush", useLightTheme ? "#9AB7D3" : "#295276");
-        SetBrushColor("TextBrush", useLightTheme ? "#183049" : "#FFFFFF");
-        SetBrushColor("MutedBrush", useLightTheme ? "#5E7893" : "#9AB2CD");
-        SetBrushColor("PanelBrush", useLightTheme ? "#EEF5FB" : "#0C1A28");
-        SetBrushColor("PanelBorderBrush", useLightTheme ? "#9CB7CF" : "#274A6B");
-        SetBrushColor("ActionBrush", useLightTheme ? "#DCE9F5" : "#173454");
-        SetBrushColor("ActionBorderBrush", useLightTheme ? "#87A8C8" : "#31597F");
-        SetBrushColor("GridRowBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("GridAltRowBrush", useLightTheme ? "#EEF5FB" : "#0D1C2C");
+        SetBrushColor("WindowBgBrush", useLightTheme ? "#FAFCFF" : "#0E1828");
+        SetBrushColor("WindowBorderBrush", useLightTheme ? "#DCE7F2" : "#22344E");
+        SetBrushColor("TextBrush", useLightTheme ? "#0E1B2B" : "#F4F8FF");
+        SetBrushColor("MutedBrush", useLightTheme ? "#637693" : "#90A3BF");
+        SetBrushColor("PanelBrush", useLightTheme ? "#FBFDFF" : "#0A1523");
+        SetBrushColor("PanelBorderBrush", useLightTheme ? "#E4EDF7" : "#1D3048");
+        SetBrushColor("ActionBrush", useLightTheme ? "#F6F9FD" : "#111C2D");
+        SetBrushColor("ActionBorderBrush", useLightTheme ? "#D8E2EF" : "#263952");
+        SetBrushColor("GridRowBrush", useLightTheme ? "#FFFFFF" : "#0E1828");
+        SetBrushColor("GridAltRowBrush", useLightTheme ? "#F8FBFF" : "#0B1322");
 
-        SetBrushColor("SummarySuccessBrush", useLightTheme ? "#D9EDE3" : "#27423D");
-        SetBrushColor("SummarySuccessBorderBrush", useLightTheme ? "#A8C4B7" : "#6C9184");
-        SetBrushColor("SummarySuccessIconBrush", useLightTheme ? "#2E6350" : "#7FE0B4");
-        SetBrushColor("SummaryPartialBrush", useLightTheme ? "#EEE4D3" : "#4A422E");
-        SetBrushColor("SummaryPartialBorderBrush", useLightTheme ? "#C7B18A" : "#A89566");
-        SetBrushColor("SummaryPartialIconBrush", useLightTheme ? "#755B2F" : "#E3C168");
-        SetBrushColor("SummaryFailureBrush", useLightTheme ? "#ECDEDF" : "#4F3537");
-        SetBrushColor("SummaryFailureBorderBrush", useLightTheme ? "#C29A9A" : "#B88484");
-        SetBrushColor("SummaryFailureIconBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
+        SetBrushColor("SummarySuccessBrush", useLightTheme ? "#E6F6EF" : "#15382C");
+        SetBrushColor("SummarySuccessBorderBrush", useLightTheme ? "#9AD4B9" : "#2A8761");
+        SetBrushColor("SummarySuccessIconBrush", useLightTheme ? "#247B53" : "#77E0AF");
+        SetBrushColor("SummaryPartialBrush", useLightTheme ? "#FFF2DA" : "#43361C");
+        SetBrushColor("SummaryPartialBorderBrush", useLightTheme ? "#E3BE79" : "#A88035");
+        SetBrushColor("SummaryPartialIconBrush", useLightTheme ? "#A56E14" : "#F3C76C");
+        SetBrushColor("SummaryFailureBrush", useLightTheme ? "#FCEAEA" : "#3E2023");
+        SetBrushColor("SummaryFailureBorderBrush", useLightTheme ? "#E4A2A7" : "#A54A57");
+        SetBrushColor("SummaryFailureIconBrush", useLightTheme ? "#B24B58" : "#F0A4AD");
 
-        SetBrushColor("ProbeBadgeSuccessBackgroundBrush", useLightTheme ? "#D9EDE3" : "#27423D");
-        SetBrushColor("ProbeBadgeSuccessBorderBrush", useLightTheme ? "#A8C4B7" : "#6C9184");
-        SetBrushColor("ProbeBadgeSuccessForegroundBrush", useLightTheme ? "#2F8E63" : "#7FE0B4");
-        SetBrushColor("ProbeBadgePartialBackgroundBrush", useLightTheme ? "#EEE4D3" : "#4A422E");
-        SetBrushColor("ProbeBadgePartialBorderBrush", useLightTheme ? "#C7B18A" : "#A89566");
-        SetBrushColor("ProbeBadgePartialForegroundBrush", useLightTheme ? "#9A6E1D" : "#E3C168");
-        SetBrushColor("ProbeBadgeFailureBackgroundBrush", useLightTheme ? "#ECDEDF" : "#4F3537");
-        SetBrushColor("ProbeBadgeFailureBorderBrush", useLightTheme ? "#C29A9A" : "#B88484");
-        SetBrushColor("ProbeBadgeFailureForegroundBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
-        SetBrushColor("ProbeBadgeNeutralBackgroundBrush", useLightTheme ? "#EEF5FB" : "#0C1A28");
-        SetBrushColor("ProbeBadgeNeutralBorderBrush", useLightTheme ? "#9CB7CF" : "#274A6B");
-        SetBrushColor("ProbeBadgeNeutralForegroundBrush", useLightTheme ? "#5E7893" : "#9AB2CD");
+        SetBrushColor("ProbeBadgeSuccessBackgroundBrush", useLightTheme ? "#E6F6EF" : "#15382C");
+        SetBrushColor("ProbeBadgeSuccessBorderBrush", useLightTheme ? "#9AD4B9" : "#2A8761");
+        SetBrushColor("ProbeBadgeSuccessForegroundBrush", useLightTheme ? "#247B53" : "#77E0AF");
+        SetBrushColor("ProbeBadgePartialBackgroundBrush", useLightTheme ? "#FFF2DA" : "#43361C");
+        SetBrushColor("ProbeBadgePartialBorderBrush", useLightTheme ? "#E3BE79" : "#A88035");
+        SetBrushColor("ProbeBadgePartialForegroundBrush", useLightTheme ? "#A56E14" : "#F3C76C");
+        SetBrushColor("ProbeBadgeFailureBackgroundBrush", useLightTheme ? "#FCEAEA" : "#3E2023");
+        SetBrushColor("ProbeBadgeFailureBorderBrush", useLightTheme ? "#E4A2A7" : "#A54A57");
+        SetBrushColor("ProbeBadgeFailureForegroundBrush", useLightTheme ? "#B24B58" : "#F0A4AD");
+        SetBrushColor("ProbeBadgeNeutralBackgroundBrush", useLightTheme ? "#F2F6FB" : "#101B2D");
+        SetBrushColor("ProbeBadgeNeutralBorderBrush", useLightTheme ? "#C7D6E6" : "#314A66");
+        SetBrushColor("ProbeBadgeNeutralForegroundBrush", useLightTheme ? "#667A95" : "#9AB0CB");
 
-        SetBrushColor("SuccessTextBrush", useLightTheme ? "#2F8E63" : "#7FE0B4");
-        SetBrushColor("PartialTextBrush", useLightTheme ? "#9A6E1D" : "#E3C168");
-        SetBrushColor("FailureTextBrush", useLightTheme ? "#A75A5A" : "#E6B3B1");
-        SetBrushColor("NeutralTextBrush", useLightTheme ? "#6D849C" : "#9AB2CD");
-        SetBrushColor("PingTextBrush", useLightTheme ? "#2C89A1" : "#96D6E8");
-        SetBrushColor("ScrollTrackBrush", useLightTheme ? "#E4EEF7" : "#102235");
-        SetBrushColor("ScrollThumbBrush", useLightTheme ? "#8EA9C2" : "#4A6A86");
-        SetBrushColor("ScrollThumbHoverBrush", useLightTheme ? "#7897B5" : "#5B7C98");
+        SetBrushColor("SuccessTextBrush", useLightTheme ? "#247B53" : "#77E0AF");
+        SetBrushColor("PartialTextBrush", useLightTheme ? "#A56E14" : "#F3C76C");
+        SetBrushColor("FailureTextBrush", useLightTheme ? "#B24B58" : "#F0A4AD");
+        SetBrushColor("NeutralTextBrush", useLightTheme ? "#667A95" : "#9AB0CB");
+        SetBrushColor("PingTextBrush", useLightTheme ? "#2B70F7" : "#6E9CFF");
+        SetBrushColor("ScrollTrackBrush", useLightTheme ? "#EEF3F8" : "#101A2A");
+        SetBrushColor("ScrollThumbBrush", useLightTheme ? "#B1C0D2" : "#3D526D");
+        SetBrushColor("ScrollThumbHoverBrush", useLightTheme ? "#94A8C0" : "#587392");
 
         if (TitleTextBlock is not null)
         {

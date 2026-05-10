@@ -1023,7 +1023,7 @@ public sealed class ConnectivityTestService
     {
         if (outcome == ProbeOutcomeKind.Success)
         {
-            return "✓ Все цели доступны.";
+            return "✓ Все домены доступны.";
         }
 
         return outcome == ProbeOutcomeKind.Failure

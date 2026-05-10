@@ -24,12 +24,12 @@ public partial class ThemedDialogWindow : Window
         TitleTextBlock.Text = title;
         MessageTextBlock.Text = message;
         ApplyTheme(useLightTheme);
-        SubtitleTextBlock.Text = buttons == DialogService.DialogButtons.YesNo
-            ? "Требуется подтверждение"
-            : isError
-                ? "Обратите внимание"
+        SubtitleTextBlock.Text = isError
+            ? "Обратите внимание"
+            : buttons == DialogService.DialogButtons.YesNo
+                ? "Требуется подтверждение"
                 : "Результат операции";
-        StatusGlyphTextBlock.Text = isError ? "!" : buttons == DialogService.DialogButtons.YesNo ? "?" : "i";
+        StatusGlyphPath.Tag = isError ? "error" : buttons == DialogService.DialogButtons.YesNo ? "question" : "info";
         PrimaryButton.Content = primaryButtonText ?? (buttons == DialogService.DialogButtons.YesNo ? "Да" : "Закрыть");
         SecondaryButton.Content = secondaryButtonText ?? "Нет";
         SecondaryButton.Visibility = buttons == DialogService.DialogButtons.YesNo ? Visibility.Visible : Visibility.Collapsed;
@@ -39,10 +39,13 @@ public partial class ThemedDialogWindow : Window
             TertiaryButton.Visibility = Visibility.Visible;
         }
 
-        PrimaryButton.Background = isError
+        var useErrorPrimaryStyle = isError &&
+                                   buttons == DialogService.DialogButtons.Ok &&
+                                   string.IsNullOrWhiteSpace(primaryButtonText);
+        PrimaryButton.Background = useErrorPrimaryStyle
             ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(197, 91, 91))
             : (System.Windows.Media.Brush)FindResource("DialogPrimaryBrush");
-        PrimaryButton.BorderBrush = isError
+        PrimaryButton.BorderBrush = useErrorPrimaryStyle
             ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(225, 124, 124))
             : (System.Windows.Media.Brush)FindResource("DialogPrimaryBorderBrush");
 
@@ -89,18 +92,18 @@ public partial class ThemedDialogWindow : Window
 
     private void ApplyTheme(bool useLightTheme)
     {
-        SetBrushColor("DialogBackgroundBrush", useLightTheme ? "#F7FBFF" : "#102235");
-        SetBrushColor("DialogBorderBrush", useLightTheme ? "#9AB7D3" : "#295276");
-        SetBrushColor("DialogTitleBrush", useLightTheme ? "#183049" : "#FFFFFF");
-        SetBrushColor("DialogTextBrush", useLightTheme ? "#4F6B88" : "#D5E4F5");
-        SetBrushColor("DialogMutedBrush", useLightTheme ? "#68839E" : "#89A6C2");
-        SetBrushColor("DialogActionBrush", useLightTheme ? "#DCE9F5" : "#173454");
-        SetBrushColor("DialogActionBorderBrush", useLightTheme ? "#87A8C8" : "#31597F");
-        SetBrushColor("DialogPrimaryBrush", useLightTheme ? "#43BF86" : "#47C78B");
-        SetBrushColor("DialogPrimaryBorderBrush", useLightTheme ? "#6FD6A4" : "#7BE2B2");
-        SetBrushColor("DialogPrimaryTextBrush", "#0A2416");
-        SetBrushColor("DialogPanelBrush", useLightTheme ? "#EEF5FB" : "#0C1A28");
-        SetBrushColor("DialogPanelBorderBrush", useLightTheme ? "#BED1E4" : "#274A6B");
+        SetBrushColor("DialogBackgroundBrush", useLightTheme ? "#FAFCFF" : "#0E1828");
+        SetBrushColor("DialogBorderBrush", useLightTheme ? "#DCE7F2" : "#22344E");
+        SetBrushColor("DialogTitleBrush", useLightTheme ? "#0E1B2B" : "#F4F8FF");
+        SetBrushColor("DialogTextBrush", useLightTheme ? "#22364D" : "#D6E3F5");
+        SetBrushColor("DialogMutedBrush", useLightTheme ? "#637693" : "#90A3BF");
+        SetBrushColor("DialogActionBrush", useLightTheme ? "#F6F9FD" : "#111C2D");
+        SetBrushColor("DialogActionBorderBrush", useLightTheme ? "#D8E2EF" : "#263952");
+        SetBrushColor("DialogPrimaryBrush", useLightTheme ? "#2B70F7" : "#2F6BFF");
+        SetBrushColor("DialogPrimaryBorderBrush", useLightTheme ? "#5C90FF" : "#6E9CFF");
+        SetBrushColor("DialogPrimaryTextBrush", "#F7FBFF");
+        SetBrushColor("DialogPanelBrush", useLightTheme ? "#FBFDFF" : "#0A1523");
+        SetBrushColor("DialogPanelBorderBrush", useLightTheme ? "#E4EDF7" : "#1D3048");
     }
 
     private void SetBrushColor(string resourceKey, string hexColor)

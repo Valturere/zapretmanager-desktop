@@ -1,7 +1,9 @@
 using System.IO.Compression;
+using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
 using ZapretManager.Models;
@@ -11,6 +13,7 @@ namespace ZapretManager.Services;
 public sealed class UpdateService
 {
     private const string VersionUrl = "https://raw.githubusercontent.com/Flowseal/zapret-discord-youtube/main/.service/version.txt";
+    private const string LatestReleaseApiUrl = "https://api.github.com/repos/Flowseal/zapret-discord-youtube/releases/latest";
     private const string ReleaseBaseUrl = "https://github.com/Flowseal/zapret-discord-youtube/releases/tag/";
     private const string ExpandedAssetsUrl = "https://github.com/Flowseal/zapret-discord-youtube/releases/expanded_assets/";
     private const string ManagerAppDataFolderName = "ZapretManager";
@@ -110,11 +113,27 @@ public sealed class UpdateService
 
         try
         {
-            Directory.Move(currentRootPath, swapPath);
+            if (ArePathsOnSameVolume(currentRootPath, swapPath))
+            {
+                Directory.Move(currentRootPath, swapPath);
+            }
+            else
+            {
+                CopyDirectory(currentRootPath, swapPath);
+                await DeleteDirectoryAsync(currentRootPath, cancellationToken);
+            }
             currentMoved = true;
 
             restoredRootPath = GetUniquePath(Path.Combine(rootDirectory, BuildReleaseFolderName(previousInstallation.Version)));
-            Directory.Move(previousPath, restoredRootPath);
+            if (ArePathsOnSameVolume(previousPath, restoredRootPath))
+            {
+                Directory.Move(previousPath, restoredRootPath);
+            }
+            else
+            {
+                CopyDirectory(previousPath, restoredRootPath);
+                await DeleteDirectoryAsync(previousPath, cancellationToken);
+            }
             previousMoved = true;
 
             Directory.Move(swapPath, previousPath);
@@ -139,7 +158,15 @@ public sealed class UpdateService
             {
                 try
                 {
-                    Directory.Move(restoredRootPath, previousPath);
+                    if (ArePathsOnSameVolume(restoredRootPath, previousPath))
+                    {
+                        Directory.Move(restoredRootPath, previousPath);
+                    }
+                    else
+                    {
+                        CopyDirectory(restoredRootPath, previousPath);
+                        await DeleteDirectoryAsync(restoredRootPath, cancellationToken);
+                    }
                 }
                 catch
                 {
@@ -152,7 +179,15 @@ public sealed class UpdateService
             {
                 try
                 {
-                    Directory.Move(swapPath, currentRootPath);
+                    if (ArePathsOnSameVolume(swapPath, currentRootPath))
+                    {
+                        Directory.Move(swapPath, currentRootPath);
+                    }
+                    else
+                    {
+                        CopyDirectory(swapPath, currentRootPath);
+                        await DeleteDirectoryAsync(swapPath, cancellationToken);
+                    }
                 }
                 catch
                 {
@@ -171,26 +206,103 @@ public sealed class UpdateService
     {
         try
         {
-            var latestVersion = (await _httpClient.GetStringAsync(VersionUrl, cancellationToken)).Trim();
-            var html = await _httpClient.GetStringAsync(ExpandedAssetsUrl + latestVersion, cancellationToken);
-            var match = Regex.Match(
-                html,
-                "href=\"(?<href>/Flowseal/zapret-discord-youtube/releases/download/[^\"]+\\.zip)\"",
-                RegexOptions.IgnoreCase);
-
-            return new UpdateInfo
+            return await GetUpdateInfoFromApiAsync(currentVersion, cancellationToken);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests)
+        {
+            try
             {
-                CurrentVersion = currentVersion,
-                LatestVersion = latestVersion,
-                DownloadUrl = match.Success ? "https://github.com" + match.Groups["href"].Value : null,
-                ReleasePageUrl = ReleaseBaseUrl + latestVersion
-            };
+                return await GetUpdateInfoFromLegacySourcesAsync(currentVersion, cancellationToken);
+            }
+            catch (Exception fallbackEx) when (NetworkErrorTranslator.IsNetworkException(fallbackEx))
+            {
+                throw NetworkErrorTranslator.CreateGitHubException(fallbackEx, "Не удалось проверить обновления");
+            }
         }
         catch (Exception ex) when (NetworkErrorTranslator.IsNetworkException(ex))
         {
-            throw NetworkErrorTranslator.CreateGitHubException(ex, "Не удалось проверить обновления");
+            try
+            {
+                return await GetUpdateInfoFromLegacySourcesAsync(currentVersion, cancellationToken);
+            }
+            catch (Exception fallbackEx) when (NetworkErrorTranslator.IsNetworkException(fallbackEx))
+            {
+                throw NetworkErrorTranslator.CreateGitHubException(fallbackEx, "Не удалось проверить обновления");
+            }
         }
     }
+
+    private async Task<UpdateInfo> GetUpdateInfoFromApiAsync(string currentVersion, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.GetAsync(LatestReleaseApiUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var root = await JsonNode.ParseAsync(stream, cancellationToken: cancellationToken) as JsonObject
+            ?? throw new InvalidOperationException("GitHub вернул пустые данные по релизу zapret.");
+
+        var tagName = root["tag_name"]?.GetValue<string>()?.Trim();
+        if (string.IsNullOrWhiteSpace(tagName))
+        {
+            throw new InvalidOperationException("GitHub вернул релиз zapret без версии.");
+        }
+
+        var latestVersion = NormalizeReleaseTag(tagName);
+        var asset = SelectZipAsset(root["assets"] as JsonArray);
+        return new UpdateInfo
+        {
+            CurrentVersion = currentVersion,
+            LatestVersion = latestVersion,
+            DownloadUrl = asset?.DownloadUrl,
+            ReleasePageUrl = root["html_url"]?.GetValue<string>()?.Trim() ?? (ReleaseBaseUrl + latestVersion)
+        };
+    }
+
+    private async Task<UpdateInfo> GetUpdateInfoFromLegacySourcesAsync(string currentVersion, CancellationToken cancellationToken)
+    {
+        var latestVersion = (await _httpClient.GetStringAsync(VersionUrl, cancellationToken)).Trim();
+        var html = await _httpClient.GetStringAsync(ExpandedAssetsUrl + latestVersion, cancellationToken);
+        var match = Regex.Match(
+            html,
+            "href=\"(?<href>/Flowseal/zapret-discord-youtube/releases/download/[^\"]+\\.zip)\"",
+            RegexOptions.IgnoreCase);
+
+        return new UpdateInfo
+        {
+            CurrentVersion = currentVersion,
+            LatestVersion = NormalizeReleaseTag(latestVersion),
+            DownloadUrl = match.Success ? "https://github.com" + match.Groups["href"].Value : null,
+            ReleasePageUrl = ReleaseBaseUrl + NormalizeReleaseTag(latestVersion)
+        };
+    }
+
+    private static string NormalizeReleaseTag(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "unknown";
+        }
+
+        var normalized = value.Trim();
+        return normalized.StartsWith("v", StringComparison.OrdinalIgnoreCase)
+            ? normalized[1..]
+            : normalized;
+    }
+
+    private static ReleaseAsset? SelectZipAsset(JsonArray? assets)
+    {
+        return assets?
+            .Select(static asset => asset as JsonObject)
+            .Where(static asset => asset is not null)
+            .Select(static asset => new ReleaseAsset(
+                asset!["name"]?.GetValue<string>()?.Trim() ?? string.Empty,
+                asset["browser_download_url"]?.GetValue<string>()?.Trim() ?? string.Empty))
+            .FirstOrDefault(static asset =>
+                asset.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) &&
+                asset.DownloadUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed record ReleaseAsset(string Name, string DownloadUrl);
 
     public async Task<UpdateOperationResult> InstallFreshAsync(string selectedPath, CancellationToken cancellationToken = default)
     {
@@ -277,25 +389,39 @@ public sealed class UpdateService
             previousVersionPath = GetPreviousVersionStoragePath(rootPath);
             await DeleteDirectoryAsync(previousVersionPath, cancellationToken);
             EnsureManagerStorageExists(rootPath);
-            try
+            if (ArePathsOnSameVolume(rootPath, previousVersionPath))
             {
-                Directory.Move(rootPath, previousVersionPath);
-                previousVersionMoved = true;
-                DisableInternalCheckUpdates(previousVersionPath);
-            }
-            catch (Exception ex) when (IsFolderBusyException(ex))
-            {
-                await TryReleaseSafeLockingProcessesAsync(fileLockInspector, rootPath);
-                if (TryMoveDirectory(rootPath, previousVersionPath))
+                try
                 {
+                    Directory.Move(rootPath, previousVersionPath);
                     previousVersionMoved = true;
                     DisableInternalCheckUpdates(previousVersionPath);
                 }
-                else
+                catch (Exception ex) when (IsFolderBusyException(ex))
                 {
-                    busyProcessSummary = BuildBusyProcessSummary(fileLockInspector, rootPath);
+                    await TryReleaseBlockingProcessesAsync(fileLockInspector, rootPath, cancellationToken);
+                    if (TryMoveDirectory(rootPath, previousVersionPath))
+                    {
+                        previousVersionMoved = true;
+                        DisableInternalCheckUpdates(previousVersionPath);
+                    }
+                    else
+                    {
+                        busyProcessSummary = BuildBusyProcessSummary(fileLockInspector, rootPath);
+                        throw CreateBusyPreviousVersionException(busyProcessSummary, ex);
+                    }
+                }
+            }
+            else
+            {
+                CopyDirectory(rootPath, previousVersionPath);
+                previousVersionMoved = true;
+                DisableInternalCheckUpdates(previousVersionPath);
+                var pendingDeletePath = await DeleteDirectoryAsync(rootPath, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(pendingDeletePath))
+                {
                     previousVersionWasBusy = true;
-                    previousVersionPath = null;
+                    busyProcessSummary = BuildBusyProcessSummary(fileLockInspector, rootPath);
                 }
             }
 
@@ -819,14 +945,20 @@ public sealed class UpdateService
 
     private static bool IsFolderBusyException(Exception exception)
     {
-        if (exception is IOException or UnauthorizedAccessException)
+        if (exception is UnauthorizedAccessException)
         {
             return true;
         }
 
+        if (exception is not IOException)
+        {
+            return false;
+        }
+
         return exception.Message.Contains("being used by another process", StringComparison.OrdinalIgnoreCase) ||
                exception.Message.Contains("используется другим процессом", StringComparison.OrdinalIgnoreCase) ||
-               exception.Message.Contains("не удается получить доступ к файлу", StringComparison.OrdinalIgnoreCase);
+               exception.Message.Contains("не удается получить доступ к файлу", StringComparison.OrdinalIgnoreCase) ||
+               exception.Message.Contains("процесс не может получить доступ", StringComparison.OrdinalIgnoreCase);
     }
 
     private static Exception CreateFriendlyUpdateException(Exception exception)
@@ -850,12 +982,46 @@ public sealed class UpdateService
         await Task.Delay(900);
     }
 
+    private static async Task TryReleaseBlockingProcessesAsync(
+        FileLockInspectorService fileLockInspector,
+        string rootPath,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await TryReleaseSafeLockingProcessesAsync(fileLockInspector, rootPath);
+
+            var remainingLocks = fileLockInspector.FindLockingProcesses(rootPath);
+            if (remainingLocks.Count == 0)
+            {
+                return;
+            }
+
+            await Task.Delay(700, cancellationToken);
+        }
+    }
+
     private static bool TryMoveDirectory(string sourcePath, string destinationPath)
     {
         try
         {
             Directory.Move(sourcePath, destinationPath);
             return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool ArePathsOnSameVolume(string sourcePath, string destinationPath)
+    {
+        try
+        {
+            var sourceRoot = Path.GetPathRoot(Path.GetFullPath(sourcePath));
+            var destinationRoot = Path.GetPathRoot(Path.GetFullPath(destinationPath));
+            return string.Equals(sourceRoot, destinationRoot, StringComparison.OrdinalIgnoreCase);
         }
         catch
         {
@@ -872,6 +1038,15 @@ public sealed class UpdateService
         }
 
         return fileLockInspector.BuildDisplaySummary(lockingProcesses);
+    }
+
+    private static Exception CreateBusyPreviousVersionException(string? busyProcessSummary, Exception innerException)
+    {
+        var message = string.IsNullOrWhiteSpace(busyProcessSummary)
+            ? "Не удалось сохранить предыдущую версию zapret для отката, потому что старая папка всё ещё занята. Закройте окна cmd или PowerShell, Проводник и другие программы, открытые из этой папки, затем повторите обновление."
+            : $"Не удалось сохранить предыдущую версию zapret для отката. Папку удерживают процессы: {busyProcessSummary}. Закройте их и повторите обновление.";
+
+        return new InvalidOperationException(message, innerException);
     }
 
     private static async Task WaitForDriverReleaseAsync(string rootPath, TimeSpan timeout)
